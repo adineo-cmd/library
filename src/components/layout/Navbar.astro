@@ -1,0 +1,66 @@
+---
+interface Props {
+  currentPage?: 'home' | 'domains' | 'roadmap' | 'graph';
+}
+
+const { currentPage = 'home' } = Astro.props;
+
+const navItems = [
+  { key: 'home', label: '00 HOME', href: '/' },
+  { key: 'domains', label: '01 DOMAINS', href: '/domains' },
+  { key: 'roadmap', label: '02 ROADMAP', href: '/roadmap' },
+  { key: 'graph', label: '03 GRAPH VIEW', href: '/graph' },
+];
+---
+
+<nav class="nav">
+  <ul class="nav-list">
+    {navItems.map(item => (
+      <li>
+        <a 
+          href={item.href} 
+          class={`nav-link ${currentPage === item.key ? 'active' : ''}`}
+        >
+          {item.label}
+        </a>
+      </li>
+    ))}
+  </ul>
+</nav>
+
+<style>
+  .nav {
+    display: flex;
+    justify-content: center;
+    padding: 0 40px 20px;
+  }
+
+  .nav-list {
+    display: flex;
+    gap: 8px;
+    list-style: none;
+  }
+
+  .nav-link {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 8px 20px;
+    border-radius: 20px;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+  }
+
+  .nav-link:hover {
+    color: var(--text-secondary);
+    border-color: var(--line-light);
+  }
+
+  .nav-link.active {
+    background: var(--accent);
+    color: var(--bg-primary);
+    font-weight: 500;
+  }
+</style>

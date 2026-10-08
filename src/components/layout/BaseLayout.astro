@@ -1,0 +1,324 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+  currentPage?: 'home' | 'domains' | 'roadmap' | 'graph';
+}
+
+const { title, description = '', currentPage = 'home' } = Astro.props;
+
+const navItems = [
+  { key: 'home', label: '00 HOME', href: '/' },
+  { key: 'domains', label: '01 DOMAINS', href: '/domains' },
+  { key: 'roadmap', label: '02 ROADMAP', href: '/roadmap' },
+  { key: 'graph', label: '03 GRAPH VIEW', href: '/graph' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} — Arbor</title>
+    <meta name="description" content={description} />
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+    
+    <style>
+      :root {
+        /* --- DARK THEME (Default) --- */
+        --bg-primary: #0a0a0a;
+        --bg-secondary: #0f0f0f;
+        --bg-tertiary: #141414;
+        --text-primary: #e8e4d9;
+        --text-secondary: #888888;
+        --text-muted: #555555;
+        --accent: #d4a574;
+        --accent-soft: rgba(212, 165, 116, 0.15);
+        --line: #1a1a1a;
+        --line-light: #2a2a2a;
+        
+        --font-display: 'Cormorant Garamond', Georgia, serif;
+        --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      /* --- LIGHT THEME --- */
+      html[data-theme="light"] {
+        --bg-primary: #f4f1ea;
+        --bg-secondary: #ebe7de;
+        --bg-tertiary: #e0dcd3;
+        --text-primary: #1a1a1a;
+        --text-secondary: #555555;
+        --text-muted: #888888;
+        --accent: #a87b48;
+        --accent-soft: rgba(168, 123, 72, 0.15);
+        --line: #dcd8cf;
+        --line-light: #c9c4ba;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html, body {
+        height: 100%;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        transition: background-color 0.4s ease, color 0.4s ease;
+      }
+
+      .header {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: var(--bg-primary);
+        border-bottom: 1px solid var(--line);
+        transition: background-color 0.4s ease, border-color 0.4s ease;
+      }
+
+      .header-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 40px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      .brand-name {
+        font-family: var(--font-display);
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        color: var(--text-primary);
+      }
+
+      .brand-tagline {
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+
+      .theme-toggle {
+        width: 48px;
+        height: 24px;
+        border-radius: 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--line);
+        position: relative;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .theme-toggle::after {
+        content: "☾";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: var(--bg-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        transition: transform 0.3s cubic-bezier(0.6, 0.2, 0.1, 1);
+      }
+
+      html[data-theme="light"] .theme-toggle::after {
+        transform: translateX(24px);
+        content: "☀";
+      }
+
+      .nav {
+        display: flex;
+        justify-content: center;
+        padding: 0 40px 20px;
+      }
+
+      .nav-list {
+        display: flex;
+        gap: 8px;
+        list-style: none;
+      }
+
+      .nav-link {
+        font-size: 11px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        padding: 8px 20px;
+        border-radius: 20px;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        border: 1px solid transparent;
+      }
+
+      .nav-link:hover {
+        color: var(--text-secondary);
+        border-color: var(--line-light);
+      }
+
+      .nav-link.active {
+        background: var(--accent);
+        color: var(--bg-primary);
+        font-weight: 500;
+      }
+
+      .main {
+        min-height: calc(100vh - 140px);
+        position: relative;
+      }
+
+      .footer {
+        text-align: center;
+        padding: 40px;
+        border-top: 1px solid var(--line);
+        color: var(--text-muted);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        margin-top: auto;
+        transition: border-color 0.4s ease;
+      }
+
+      .footer p { margin: 0; }
+
+      .eyebrow {
+        font-size: 10px;
+        letter-spacing: 0.25em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 20px;
+        height: 1px;
+        background: var(--accent);
+      }
+
+      .page-title {
+        font-family: var(--font-display);
+        font-size: clamp(32px, 5vw, 56px);
+        font-style: italic;
+        font-weight: 400;
+        margin: 0 0 16px 0;
+        color: var(--text-primary);
+        line-height: 1.1;
+      }
+
+      .page-subtitle {
+        font-size: 14px;
+        line-height: 1.7;
+        color: var(--text-secondary);
+        max-width: 600px;
+      }
+
+      .search-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 18px;
+        max-width: 520px;
+        margin: 32px 0;
+        transition: border-color 0.3s ease, background-color 0.4s ease;
+      }
+
+      .search-bar:focus-within {
+        border-color: var(--accent);
+      }
+
+      .search-icon {
+        color: var(--text-muted);
+        font-size: 14px;
+      }
+
+      .search-bar input {
+        background: none;
+        border: none;
+        outline: none;
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        font-size: 13px;
+        width: 100%;
+      }
+
+      .search-bar input::placeholder {
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-top">
+        <div class="brand">
+          <span class="brand-name">ARBOR.</span>
+          <span class="brand-tagline">A Field Atlas for Wandering Minds</span>
+        </div>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme"></button>
+      </div>
+      <nav class="nav">
+        <ul class="nav-list">
+          {navItems.map(item => (
+            <li>
+              <a 
+                href={item.href} 
+                class={`nav-link ${currentPage === item.key ? 'active' : ''}`}
+              >
+                {item.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </header>
+
+    <main class="main">
+      <slot />
+    </main>
+
+    <footer class="footer">
+      <p>Arbor — a visual atlas concept. Designed, not built.</p>
+    </footer>
+
+    <script>
+      const root = document.documentElement;
+      const themeToggle = document.getElementById('themeToggle');
+      
+      // Force dark mode by default if nothing is saved
+      const savedTheme = localStorage.getItem('arbor-theme') || 'dark';
+      root.setAttribute('data-theme', savedTheme);
+      
+      if (themeToggle) {
+        themeToggle.addEventListener('click', () => {
+          const current = root.getAttribute('data-theme');
+          const next = current === 'dark' ? 'light' : 'dark';
+          root.setAttribute('data-theme', next);
+          localStorage.setItem('arbor-theme', next);
+        });
+      }
+    </script>
+  </body>
+</html>
