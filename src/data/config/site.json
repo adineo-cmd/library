@@ -1,0 +1,20 @@
+{
+  "title": "Memex",
+  "tagline": "An Associative Trail Through Human Knowledge",
+  "description": "Explore the interconnected web of human knowledge. Discover fields you never knew existed and how they relate to what you already know.",
+  "author": "Memex Contributors",
+  "url": "https://yourdomain.com",
+  "theme": {
+    "default": "dark",
+    "colors": {
+      "primary": "#38bdf8",
+      "secondary": "#818cf8",
+      "accent": "#34d399"
+    }
+  },
+  "features": {
+    "enableGraph": true,
+    "enableSearch": true,
+    "enableDarkMode": true
+  }
+}
