@@ -1,46 +1,45 @@
-# Astro Starter Kit: Basics
+# Arbor
+
+A field atlas for wandering minds — a static, visual map of human knowledge:
+domains, sub-domains, learning roadmaps and a global constellation graph built
+with Astro + Svelte + D3.
+
+## Views
+
+| Route       | What it shows                                                        |
+| ----------- | -------------------------------------------------------------------- |
+| `/`         | The main trunks of the atlas (D3 radial branch view, searchable)     |
+| `/domains`  | Full interactive domain tree — expand/collapse, zoom, deep links      |
+| `/roadmap`  | Learning roadmaps rendered from JSON in `src/data/roadmaps/`          |
+| `/graph`    | Constellation of every mapped field, clustered by trunk               |
+
+All three views read from the same source of truth: `src/data/Domain/domains.json`.
+
+## Development
+
+Requires Node.js >= 22.12.
 
 ```sh
-npm create astro@latest -- --template basics
+npm install
+npm run dev      # local dev server at localhost:4321
+npm run build    # static site into ./dist
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Adding data
 
-## 🚀 Project Structure
+- **Domains** — edit `src/data/Domain/domains.json` (hierarchical `name` / `id` / `children`).
+- **Roadmaps** — drop a new `.json` file into `src/data/roadmaps/`; it appears on `/roadmap` automatically.
+- **Graph adjacency** — cross-trunk threads are curated in `src/pages/graph.astro`.
 
-Inside of your Astro project, you'll see the following folders and files:
+## Where to gather data
 
-```text
-/
-├── public/
-│   └── favicon.svg
-├── src
-│   ├── assets
-│   │   └── astro.svg
-│   ├── components
-│   │   └── Welcome.astro
-│   ├── layouts
-│   │   └── Layout.astro
-│   └── pages
-│       └── index.astro
-└── package.json
-```
+Curated, open taxonomies you can seed the atlas from:
 
-To learn more about the folder structure of an Astro project, refer to [our guide on project structure](https://docs.astro.build/en/basics/project-structure/).
+- [Dewey Decimal Classification](https://en.wikipedia.org/wiki/Dewey_Decimal_Classification) and the [Library of Congress Classification](https://loc.gov/classification/) — classic, complete field hierarchies.
+- [Wikidata](https://www.wikidata.org) (`P279` subclass-of queries against "academic discipline") and Wikipedia's [Outline of academic disciplines](https://en.wikipedia.org/wiki/Outline_of_academic_disciplines).
+- [DBpedia](https://www.dbpedia.org) / [YAGO](https://yago-knowledge.org) — free knowledge graphs with discipline relations.
+- [OpenAlex](https://openalex.org) and [Microsoft Academic Graph](https://mag.cambridge.org/) — topic classifications per research field.
+- [roadmap.sh](https://roadmap.sh) JSON, [FreeCodeCamp](https://www.freecodecamp.org/news/), and university curricula for learning paths.
+- [arXiv categories](https://arxiv.org/category_taxonomy) and [ACM CCS](https://dl.acm.org/ccs) for CS/math structure.
 
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Keep everything under an open licence (CC0/CC-BY) and record provenance per node.
