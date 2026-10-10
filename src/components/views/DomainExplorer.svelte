@@ -19,16 +19,44 @@
   const colorNodeStroke = '#555555';
   const colorLink = '#1a1a1a';
 
+  // One hue per top-level trunk — children inherit their trunk's colour so
+  // each branch of the atlas is recognisable at a glance.
+  const trunkPalette = [
+    '#2dd4bf', '#60a5fa', '#a78bfa', '#d4a574',
+    '#f87171', '#34d399', '#fbbf24', '#94a3b8'
+  ];
+
+  function assignColors() {
+    (treeData.children || []).forEach((child, idx) => {
+      child._color = trunkPalette[idx % trunkPalette.length];
+    });
+  }
+
+  function nodeColor(d) {
+    if (d.depth === 0) return colorAccent;
+    let n = d;
+    while (n.depth > 1) n = n.parent;
+    return n.data._color || colorAccent;
+  }
+
   onMount(() => {
     if (typeof window === 'undefined') return;
     if (!container) return;
-    
+
+    assignColors();
     drawTree();
     window.addEventListener('resize', handleResize);
-    
+
     const searchInput = document.getElementById('domainSearch');
     if (searchInput) {
       searchInput.addEventListener('input', handleSearch);
+      // Deep link support: /domains?open=Physics opens that branch directly
+      const params = new URLSearchParams(window.location.search);
+      const openName = params.get('open');
+      if (openName) {
+        searchInput.value = openName;
+        handleSearch({ target: searchInput });
+      }
     }
   });
 
@@ -79,9 +107,9 @@
         d._highlighted = true;
       });
     }
-    
+
     update(root);
-    
+
     // Smooth pan to the first match
     if (searchMatches.length > 0) {
       zoomToNode(searchMatches[0]);
@@ -117,7 +145,7 @@
       .attr('cx', '50%')
       .attr('cy', '50%')
       .attr('r', '50%');
-    
+
     gradient.append('stop').attr('offset', '0%').attr('stop-color', colorAccent).attr('stop-opacity', 0.4);
     gradient.append('stop').attr('offset', '100%').attr('stop-color', colorAccent).attr('stop-opacity', 0);
 
@@ -130,7 +158,7 @@
         const t = event.transform;
         vis.attr('transform', `translate(${margin.left + t.x}, ${margin.top + t.y}) scale(${t.k})`);
       });
-    
+
     svg.call(zoomBehavior);
 
     // Parse hierarchical data
@@ -165,7 +193,7 @@
     const bh = (maxX - minX) || 1;
     const k = Math.min((width - pad * 2) / bw, (height - pad * 2) / bh, 1.5);
     const cy = (minX + maxX) / 2;
-    
+
     const initialTx = pad;
     const initialTy = (height / 2) - (cy * k);
 
@@ -186,7 +214,7 @@
   function update(source) {
     const tree = d3.tree().nodeSize([45, 180]);
     tree(root);
-    
+
     const nodes = root.descendants().reverse();
     const links = root.links();
     const diagonal = d3.linkHorizontal().x(d => d.y).y(d => d.x);
@@ -234,12 +262,12 @@
 
     nodeUpdate.select('circle')
       .attr('r', d => d.depth === 0 ? 8 : (d._highlighted ? 6 : 4))
-      .attr('fill', d => d.depth === 0 ? colorAccent : 'none')
-      .attr('stroke', d => d._highlighted ? colorAccent : (d.depth === 0 ? 'none' : colorNodeStroke))
+      .attr('fill', d => d.depth === 0 ? colorAccent : (d._highlighted ? nodeColor(d) : 'none'))
+      .attr('stroke', d => d.depth === 0 ? 'none' : (d._highlighted ? nodeColor(d) : colorNodeStroke))
       .attr('stroke-width', d => d.depth === 0 ? 0 : (d._highlighted ? 2.5 : 1.5));
 
     nodeUpdate.select('text')
-      .attr('fill', d => d._highlighted ? colorAccent : (d.depth === 0 ? colorTextPrimary : colorTextSecondary))
+      .attr('fill', d => d._highlighted ? nodeColor(d) : (d.depth === 0 ? colorTextPrimary : colorTextSecondary))
       .attr('opacity', 1);
 
     // Exit
@@ -268,7 +296,7 @@
     link.merge(linkEnter).transition().duration(duration)
       .attr('d', diagonal)
       .attr('class', d => d.target._highlighted ? 'link highlighted' : 'link')
-      .attr('stroke', d => d.target._highlighted ? colorAccent : colorLink)
+      .attr('stroke', d => d.target._highlighted ? nodeColor(d.target) : colorLink)
       .attr('stroke-width', d => d.target._highlighted ? 2 : 1);
 
     link.exit().transition().duration(duration)
@@ -287,10 +315,10 @@
     const currentK = d3.zoomTransform(svg.node()).k;
     const margin = { top: 40, right: 150, bottom: 40, left: 150 };
     const containerRect = container.getBoundingClientRect();
-    
+
     const targetX = (containerRect.width / 2) - margin.left - (d.y * currentK);
     const targetY = (containerRect.height / 2) - margin.top - (d.x * currentK);
-    
+
     svg.transition().duration(duration)
       .call(zoomBehavior.transform, d3.zoomIdentity.translate(targetX, targetY).scale(currentK));
   }

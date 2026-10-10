@@ -1,18 +1,26 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
 import DomainTree from '../components/views/DomainTree.svelte';
+import domainsData from '../data/Domain/domains.json';
 
-// Mock data for the tree visualization (replace with your actual data loader later)
-const mainDomains = [
-  { id: '01', label: 'Sciences' },
-  { id: '02', label: 'Mathematics & Logic' },
-  { id: '03', label: 'Technology & Computing' },
-  { id: '04', label: 'Humanities' },
-  { id: '05', label: 'Social Sciences' },
-  { id: '06', label: 'Arts & Culture' },
-  { id: '07', label: 'Health & Medicine' },
-  { id: '08', label: 'Law & Governance' },
-];
+// Derive the main trunks straight from the real atlas data,
+// along with a quick count of what lives under each one.
+function countLeaves(node: any): number {
+  if (!node.children || node.children.length === 0) return 1;
+  return node.children.reduce((sum: number, c: any) => sum + countLeaves(c), 0);
+}
+
+const mainDomains = domainsData.children.map((d: any) => ({
+  id: d.id,
+  label: d.name,
+  count: countLeaves(d),
+}));
+
+const totalFields = countLeaves(domainsData as any);
+const totalDomains = domainsData.children.reduce(
+  (s: number, d: any) => s + (d.children?.length ?? 0),
+  0
+);
 ---
 
 <BaseLayout title="Home" currentPage="home">
@@ -21,8 +29,9 @@ const mainDomains = [
       <div class="eyebrow">Welcome</div>
       <h1 class="page-title">Where would you like to wander today?</h1>
       <p class="page-subtitle">
-        These are the main trunks of the atlas — every domain, subdomain, and 
-        roadmap below grows out from one of these.
+        These are the main trunks of the atlas — every domain, subdomain, and
+        roadmap below grows out from one of these. Hover a trunk to trace its
+        branch, click it to start exploring.
       </p>
     </div>
 
@@ -33,6 +42,24 @@ const mainDomains = [
 
     <div class="tree-container">
       <DomainTree client:only="svelte" domains={mainDomains} />
+    </div>
+
+    <div class="stats-strip">
+      <div class="stat">
+        <span class="stat-value">{mainDomains.length}</span>
+        <span class="stat-label">trunks</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{totalDomains}</span>
+        <span class="stat-label">domains</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{totalFields}</span>
+        <span class="stat-label">fields mapped</span>
+      </div>
+      <div class="stat stat-cta">
+        <a class="stat-link" href="/graph">open the constellation →</a>
+      </div>
     </div>
   </div>
 </BaseLayout>
@@ -55,12 +82,62 @@ const mainDomains = [
     position: relative;
   }
 
+  .stats-strip {
+    display: flex;
+    gap: 48px;
+    align-items: baseline;
+    margin-top: 48px;
+    padding-top: 28px;
+    border-top: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 32px;
+    color: var(--text-primary);
+  }
+
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .stat-cta {
+    margin-left: auto;
+  }
+
+  .stat-link {
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+    letter-spacing: 0.05em;
+  }
+
+  .stat-link:hover {
+    text-decoration: underline;
+  }
+
   @media (max-width: 768px) {
     .page-container {
       padding: 40px 20px 60px;
     }
     .tree-container {
       height: 500px;
+    }
+    .stats-strip {
+      gap: 28px;
+    }
+    .stat-cta {
+      margin-left: 0;
     }
   }
 </style>

@@ -1,51 +1,310 @@
 {
-  "name": "Domain",
+  "name": "Arbor Root",
   "id": "00",
   "children": [
     {
       "name": "Natural Sciences",
       "id": "01",
       "children": [
-        { "name": "Mathematics", "id": "01-01" },
-        { "name": "Physics", "id": "01-02" },
-        { "name": "Chemistry", "id": "01-03" },
-        { "name": "Molecular Biology", "id": "01-04" },
-        { "name": "Astronomy", "id": "01-05" },
-        { "name": "Earth Sciences", "id": "01-06" },
-        { "name": "Medicine", "id": "01-07" },
-        { "name": "Neuroscience", "id": "01-08" }
+        {
+          "name": "Physics",
+          "id": "01-01",
+          "children": [
+            { "name": "Classical Mechanics", "id": "01-01-01" },
+            { "name": "Quantum Mechanics", "id": "01-01-02" },
+            { "name": "Relativity", "id": "01-01-03" },
+            { "name": "Thermodynamics", "id": "01-01-04" },
+            { "name": "Optics", "id": "01-01-05" }
+          ]
+        },
+        {
+          "name": "Chemistry",
+          "id": "01-02",
+          "children": [
+            { "name": "Organic Chemistry", "id": "01-02-01" },
+            { "name": "Inorganic Chemistry", "id": "01-02-02" },
+            { "name": "Physical Chemistry", "id": "01-02-03" },
+            { "name": "Biochemistry", "id": "01-02-04" }
+          ]
+        },
+        {
+          "name": "Biology",
+          "id": "01-03",
+          "children": [
+            { "name": "Molecular Biology", "id": "01-03-01" },
+            { "name": "Genetics", "id": "01-03-02" },
+            { "name": "Ecology", "id": "01-03-03" },
+            { "name": "Evolution", "id": "01-03-04" },
+            { "name": "Microbiology", "id": "01-03-05" },
+            { "name": "Mycology", "id": "01-03-06" }
+          ]
+        },
+        {
+          "name": "Earth & Space",
+          "id": "01-04",
+          "children": [
+            { "name": "Geology", "id": "01-04-01" },
+            { "name": "Oceanography", "id": "01-04-02" },
+            { "name": "Meteorology", "id": "01-04-03" },
+            { "name": "Astronomy", "id": "01-04-04" },
+            { "name": "Cosmology", "id": "01-04-05" }
+          ]
+        }
       ]
     },
     {
-      "name": "Formal & Applied Sciences",
+      "name": "Formal Sciences",
       "id": "02",
       "children": [
-        { "name": "Computer Science", "id": "02-01" }
+        {
+          "name": "Mathematics",
+          "id": "02-01",
+          "children": [
+            { "name": "Logic & Set Theory", "id": "02-01-01" },
+            { "name": "Algebra", "id": "02-01-02" },
+            { "name": "Analysis & Calculus", "id": "02-01-03" },
+            { "name": "Geometry & Topology", "id": "02-01-04" },
+            { "name": "Probability & Statistics", "id": "02-01-05" },
+            { "name": "Number Theory", "id": "02-01-06" }
+          ]
+        },
+        {
+          "name": "Computer Science",
+          "id": "02-02",
+          "children": [
+            { "name": "Algorithms & Data Structures", "id": "02-02-01" },
+            { "name": "Programming Languages", "id": "02-02-02" },
+            { "name": "Operating Systems", "id": "02-02-03" },
+            { "name": "Databases", "id": "02-02-04" },
+            { "name": "Computer Networks", "id": "02-02-05" },
+            { "name": "Cryptography", "id": "02-02-06" }
+          ]
+        },
+        {
+          "name": "Artificial Intelligence",
+          "id": "02-03",
+          "children": [
+            { "name": "Machine Learning", "id": "02-03-01" },
+            { "name": "Deep Learning", "id": "02-03-02" },
+            { "name": "Natural Language Processing", "id": "02-03-03" },
+            { "name": "Computer Vision", "id": "02-03-04" },
+            { "name": "Robotics", "id": "02-03-05" }
+          ]
+        }
       ]
     },
     {
       "name": "Social Sciences",
       "id": "03",
       "children": [
-        { "name": "Linguistics", "id": "03-01" },
-        { "name": "Psychology", "id": "03-02" },
-        { "name": "Anthropology", "id": "03-03" },
-        { "name": "Economics", "id": "03-04" },
-        { "name": "Political Theory", "id": "03-05" }
+        {
+          "name": "Psychology",
+          "id": "03-01",
+          "children": [
+            { "name": "Cognitive Psychology", "id": "03-01-01" },
+            { "name": "Behavioral Psychology", "id": "03-01-02" },
+            { "name": "Social Psychology", "id": "03-01-03" },
+            { "name": "Clinical Psychology", "id": "03-01-04" }
+          ]
+        },
+        {
+          "name": "Economics",
+          "id": "03-02",
+          "children": [
+            { "name": "Microeconomics", "id": "03-02-01" },
+            { "name": "Macroeconomics", "id": "03-02-02" },
+            { "name": "Econometrics", "id": "03-02-03" },
+            { "name": "Game Theory", "id": "03-02-04" }
+          ]
+        },
+        {
+          "name": "Political Science",
+          "id": "03-03",
+          "children": [
+            { "name": "Political Theory", "id": "03-03-01" },
+            { "name": "International Relations", "id": "03-03-02" },
+            { "name": "Public Policy", "id": "03-03-03" }
+          ]
+        },
+        {
+          "name": "Society & Culture",
+          "id": "03-04",
+          "children": [
+            { "name": "Sociology", "id": "03-04-01" },
+            { "name": "Anthropology", "id": "03-04-02" },
+            { "name": "Geography & Cartography", "id": "03-04-03" },
+            { "name": "Education & Pedagogy", "id": "03-04-04" }
+          ]
+        }
       ]
     },
     {
       "name": "Humanities",
       "id": "04",
       "children": [
-        { "name": "Philosophy", "id": "04-01" },
-        { "name": "Law", "id": "04-02" },
-        { "name": "History", "id": "04-03" },
-        { "name": "Archaeology", "id": "04-04" },
-        { "name": "Literature", "id": "04-05" },
-        { "name": "Visual Arts", "id": "04-06" },
-        { "name": "Music Theory", "id": "04-07" },
-        { "name": "Architecture", "id": "04-08" }
+        {
+          "name": "Philosophy",
+          "id": "04-01",
+          "children": [
+            { "name": "Epistemology", "id": "04-01-01" },
+            { "name": "Ethics", "id": "04-01-02" },
+            { "name": "Metaphysics", "id": "04-01-03" },
+            { "name": "Aesthetics", "id": "04-01-04" },
+            { "name": "Philosophy of Mind", "id": "04-01-05" }
+          ]
+        },
+        {
+          "name": "Languages & Literature",
+          "id": "04-02",
+          "children": [
+            { "name": "Linguistics", "id": "04-02-01" },
+            { "name": "World Literature", "id": "04-02-02" },
+            { "name": "Rhetoric & Composition", "id": "04-02-03" },
+            { "name": "Translation Studies", "id": "04-02-04" }
+          ]
+        },
+        {
+          "name": "History",
+          "id": "04-03",
+          "children": [
+            { "name": "Ancient History", "id": "04-03-01" },
+            { "name": "Medieval History", "id": "04-03-02" },
+            { "name": "Modern History", "id": "04-03-03" },
+            { "name": "Archaeology", "id": "04-03-04" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Arts",
+      "id": "05",
+      "children": [
+        {
+          "name": "Visual Arts",
+          "id": "05-01",
+          "children": [
+            { "name": "Drawing & Painting", "id": "05-01-01" },
+            { "name": "Sculpture", "id": "05-01-02" },
+            { "name": "Photography", "id": "05-01-03" },
+            { "name": "Film & Animation", "id": "05-01-04" }
+          ]
+        },
+        {
+          "name": "Music",
+          "id": "05-02",
+          "children": [
+            { "name": "Music Theory", "id": "05-02-01" },
+            { "name": "Composition", "id": "05-02-02" },
+            { "name": "Acoustics", "id": "05-02-03" },
+            { "name": "Sound Engineering", "id": "05-02-04" }
+          ]
+        },
+        {
+          "name": "Design",
+          "id": "05-03",
+          "children": [
+            { "name": "Typography", "id": "05-03-01" },
+            { "name": "Information Visualization", "id": "05-03-02" },
+            { "name": "Industrial Design", "id": "05-03-03" },
+            { "name": "Architecture", "id": "05-03-04" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Health & Medicine",
+      "id": "06",
+      "children": [
+        {
+          "name": "Clinical Medicine",
+          "id": "06-01",
+          "children": [
+            { "name": "Internal Medicine", "id": "06-01-01" },
+            { "name": "Surgery", "id": "06-01-02" },
+            { "name": "Pediatrics", "id": "06-01-03" },
+            { "name": "Psychiatry", "id": "06-01-04" }
+          ]
+        },
+        {
+          "name": "Basic Medical Sciences",
+          "id": "06-02",
+          "children": [
+            { "name": "Anatomy", "id": "06-02-01" },
+            { "name": "Physiology", "id": "06-02-02" },
+            { "name": "Pathology", "id": "06-02-03" },
+            { "name": "Pharmacology", "id": "06-02-04" }
+          ]
+        },
+        {
+          "name": "Mind & Body",
+          "id": "06-03",
+          "children": [
+            { "name": "Neuroscience", "id": "06-03-01" },
+            { "name": "Nutrition", "id": "06-03-02" },
+            { "name": "Kinesiology", "id": "06-03-03" },
+            { "name": "Epidemiology", "id": "06-03-04" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Law & Governance",
+      "id": "07",
+      "children": [
+        {
+          "name": "Legal Theory",
+          "id": "07-01",
+          "children": [
+            { "name": "Constitutional Law", "id": "07-01-01" },
+            { "name": "Criminal Law", "id": "07-01-02" },
+            { "name": "Civil Law", "id": "07-01-03" },
+            { "name": "International Law", "id": "07-01-04" }
+          ]
+        },
+        {
+          "name": "Applied Governance",
+          "id": "07-02",
+          "children": [
+            { "name": "Urban Planning", "id": "07-02-01" },
+            { "name": "Public Administration", "id": "07-02-02" },
+            { "name": "Journalism & Media", "id": "07-02-03" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Engineering & Applied Fields",
+      "id": "08",
+      "children": [
+        {
+          "name": "Core Engineering",
+          "id": "08-01",
+          "children": [
+            { "name": "Electrical Engineering", "id": "08-01-01" },
+            { "name": "Mechanical Engineering", "id": "08-01-02" },
+            { "name": "Civil Engineering", "id": "08-01-03" },
+            { "name": "Chemical Engineering", "id": "08-01-04" }
+          ]
+        },
+        {
+          "name": "Software Craft",
+          "id": "08-02",
+          "children": [
+            { "name": "Web Development", "id": "08-02-01" },
+            { "name": "Systems Programming", "id": "08-02-02" },
+            { "name": "DevOps & Cloud", "id": "08-02-03" },
+            { "name": "Data Engineering", "id": "08-02-04" }
+          ]
+        },
+        {
+          "name": "Interdisciplinary",
+          "id": "08-03",
+          "children": [
+            { "name": "Bioengineering", "id": "08-03-01" },
+            { "name": "Materials Science", "id": "08-03-02" },
+            { "name": "Climate Science & Energy", "id": "08-03-03" }
+          ]
+        }
       ]
     }
   ]
