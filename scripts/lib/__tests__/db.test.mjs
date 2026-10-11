@@ -21,6 +21,23 @@ describe('assignStableIds', () => {
       .toEqual([{ id: 1, name: 'Apple' }, { id: 2, name: 'Zebra' }]);
   });
 
+  // Task 6 ranks on articleCount, which now comes from category.cat_pages.
+  // If renumbering dropped or shuffled these, the atlas would rank on the
+  // wrong number with no error anywhere.
+  it('carries the authoritative counts through renumbering', () => {
+    const db = openDb(':memory:');
+    const insert = db.prepare('INSERT INTO cat(name,cat_pages,cat_subcats) VALUES (?,?,?)');
+    insert.run('Zebra', 7, 3);
+    insert.run('Apple', 250, 11);
+    insert.run('Mango', 1, 0);
+    assignStableIds(db);
+    expect(db.prepare('SELECT name,cat_pages,cat_subcats FROM cat ORDER BY id').all()).toEqual([
+      { name: 'Apple', cat_pages: 250, cat_subcats: 11 },
+      { name: 'Mango', cat_pages: 1, cat_subcats: 0 },
+      { name: 'Zebra', cat_pages: 7, cat_subcats: 3 },
+    ]);
+  });
+
   it('remaps parent edges to the new ids', () => {
     const db = openDb(':memory:');
     db.prepare('INSERT INTO cat(name) VALUES (?)').run('Zebra');

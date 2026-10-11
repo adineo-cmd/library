@@ -70,46 +70,53 @@ export async function ingest() {
   const PAGE_TITLE = column(pageSchema, 'page', 'page_title');
   const CAT_ID = column(catSchema, 'category', 'cat_id');
   const CAT_TITLE = column(catSchema, 'category', 'cat_title');
+  const CAT_PAGES = column(catSchema, 'category', 'cat_pages');
+  const CAT_SUBCATS = column(catSchema, 'category', 'cat_subcats');
   const CL_FROM = column(linksSchema, 'categorylinks', 'cl_from');
   const CL_TYPE = column(linksSchema, 'categorylinks', 'cl_type');
   const CL_TARGET = column(linksSchema, 'categorylinks', 'cl_target_id');
 
-  const insCat = db.prepare('INSERT OR IGNORE INTO cat(name) VALUES (?)');
+  const insCat = db.prepare('INSERT OR IGNORE INTO cat(name,cat_pages,cat_subcats) VALUES (?,?,?)');
   const insParent = db.prepare('INSERT INTO parent(child,parent) VALUES (?,?)');
   const insMember = db.prepare('INSERT INTO member(article,cat) VALUES (?,?)');
 
-  // --- Pass A: the page table, the only place a category's page is named. ---
+  // --- Pass A: the category table, the authoritative category list. ---
   //
   // Two maps keyed on numbers rather than strings: page ids and cat ids are
   // small integers, and a numeric Map is both far smaller and faster to probe
   // than one keyed on strings. The ids stored are provisional; assignStableIds
   // renumbers cat alphabetically at the end and remaps every foreign key, so
   // nothing downstream depends on these exact numbers.
-  const idByPageId = new Map();
+  //
+  // No cat_id -> cat_title map is kept: the title goes straight into SQLite
+  // and only the resulting row id is retained.
+  const idByCatId = new Map();
   const idByName = new Map();
   let rawCategories = 0;
-  let guarded = false;
+  let guardedCats = false;
 
   const insertCats = db.transaction((batch) => {
-    for (const [pageId, name] of batch) {
-      const info = insCat.run(name);
+    for (const [catId, name, pages, subcats] of batch) {
+      const info = insCat.run(name, pages, subcats);
       // A name that collides after normalisation is ignored; neither map may
       // claim an id for a row that was never created.
       if (info.changes === 1) {
-        idByPageId.set(pageId, info.lastInsertRowid);
+        idByCatId.set(catId, info.lastInsertRowid);
         idByName.set(name, info.lastInsertRowid);
       }
     }
   });
 
   let catBatch = [];
-  await streamInsertRows(PATHS.page, (table, v) => {
-    if (table !== 'page' || v[PAGE_NS] !== CATEGORY_NAMESPACE) return;
-    if (!guarded) { guardWidth('page', v, pageCols.length); guarded = true; }
-    const name = normalizeCategoryName(v[PAGE_TITLE]);
-    if (!name || isMaintenanceCategory(name)) return;
+  await streamInsertRows(PATHS.category, (table, v) => {
+    if (table !== 'category') return;
+    if (!guardedCats) { guardWidth('category', v, catCols.length); guardedCats = true; }
     rawCategories++;
-    catBatch.push([Number(v[PAGE_ID]), name]);
+    const name = normalizeCategoryName(v[CAT_TITLE]);
+    if (!name || isMaintenanceCategory(name)) return;
+    catBatch.push([
+      Number(v[CAT_ID]), name, Number(v[CAT_PAGES]) || 0, Number(v[CAT_SUBCATS]) || 0,
+    ]);
     if (catBatch.length >= BATCH) { insertCats(catBatch); catBatch = []; }
   });
   if (catBatch.length) insertCats(catBatch);
@@ -117,22 +124,21 @@ export async function ingest() {
   INGEST_STATS.rawCategories = rawCategories;
   INGEST_STATS.afterMetaFilter = db.prepare('SELECT COUNT(*) AS n FROM cat').get().n;
 
-  // --- Pass B: the category table, which is where a link target is named. ---
+  // --- Pass B: the page table, for the other half of a category edge. ---
   //
-  // categorylinks.cl_target_id is a cat_id, which is an id space of its own:
-  // in the 2026 dumps 15.5% of the values exceed the largest page_id, and the
-  // in-range ones name pages in namespaces 0 and 3 rather than 14. Joining
-  // cl_target_id to page.page_id would therefore resolve most links to the
-  // wrong category, quietly.
-  const idByCatId = new Map();
-  let guardedCats = false;
+  // categorylinks.cl_from is a page_id, and only a category page can be the
+  // child of a subcategory edge. Titles are matched through the category
+  // table's names because the two dumps disagree on underscores: page titles
+  // carry none, cat_title carries them.
+  const idByPageId = new Map();
+  let guarded = false;
 
-  await streamInsertRows(PATHS.category, (table, v) => {
-    if (table !== 'category') return;
-    if (!guardedCats) { guardWidth('category', v, catCols.length); guardedCats = true; }
-    const id = idByName.get(normalizeCategoryName(v[CAT_TITLE]));
+  await streamInsertRows(PATHS.page, (table, v) => {
+    if (table !== 'page' || v[PAGE_NS] !== CATEGORY_NAMESPACE) return;
+    if (!guarded) { guardWidth('page', v, pageCols.length); guarded = true; }
+    const id = idByName.get(normalizeCategoryName(v[PAGE_TITLE]));
     if (id === undefined) return;
-    idByCatId.set(Number(v[CAT_ID]), id);
+    idByPageId.set(Number(v[PAGE_ID]), id);
   });
 
   // --- Pass C: categorylinks, which names its target only by cat_id. ---

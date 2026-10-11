@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { streamInsertRows, readDumpSchema } from '../sql-stream.mjs';
+import { normalizeCategoryName } from '../categories.mjs';
 
 function gz(sql) {
   const path = join(mkdtempSync(join(tmpdir(), 'atlas-sql-')), 'f.sql.gz');
@@ -67,12 +68,23 @@ describe('streamInsertRows', () => {
     await streamInsertRows(FIXTURE, (t, v) => {
       if (t === 'category') cats.set(Number(v[0]), v[1]);
     });
+    const pageTitles = new Set();
+    await streamInsertRows(FIXTURE, (t, v) => {
+      if (t === 'page' && v[1] === '14') pageTitles.add(v[2]);
+    });
+
+    let checked = 0;
     await streamInsertRows(FIXTURE, (t, v) => {
       if (t !== 'categorylinks' || v[4] !== 'subcat') return;
-      const target = cats.get(Number(v[6]));
-      expect(target).toBeDefined();
-      expect(target).toBe('Physical sciences');
+      const title = cats.get(Number(v[6]));
+      expect(title).toBeDefined();
+      // cat_title carries underscores, page titles do not; the two only meet
+      // after normalisation, and ingest must do it on both sides.
+      expect(title).toBe('Physical_sciences');
+      expect(pageTitles).toContain(normalizeCategoryName(title));
+      checked++;
     });
+    expect(checked).toBe(3);
   });
 
   it('handles commas and escaped quotes inside string values', async () => {
@@ -184,10 +196,10 @@ describe('readDumpSchema', () => {
     ]);
   });
 
-  it('reads the category table that carries the names', async () => {
+  it('reads the category table that carries the names and counts', async () => {
     const schema = await readDumpSchema(FIXTURE);
     expect(schema.get('category')).toEqual([
-      'cat_id', 'cat_title', 'cat_pages', 'cat_subcats', 'cat_hidden',
+      'cat_id', 'cat_title', 'cat_pages', 'cat_subcats', 'cat_files',
     ]);
   });
 
