@@ -350,8 +350,14 @@ describe('parseLayout', () => {
     expect(() => parseLayout(buf, 3, 0, 0)).toThrow(/rootCount/i);
     expect(() => parseLayout(buf, 3, 4, 0)).toThrow(/rootCount/i);
   });
+  it('includes the tree-edge count in the truncation message', () => {
+    expect(() => parseLayout(new ArrayBuffer(8), 4, 2, 0)).toThrow(/2 tree edges/);
+  });
+  it('accepts a forest of isolated roots (zero tree edges)', () => {
+    const l = parseLayout(new ArrayBuffer(4 * 8), 4, 4, 0);
+    expect(l.treeSrc).toHaveLength(0);
+  });
   it('accepts a Buffer view without corrupting coordinates', () => {
-    const { Buffer } = require('node:buffer');
     const padded = Buffer.concat([Buffer.alloc(8), Buffer.from(build(3, 1, 0))]);
     const l = parseLayout(padded, 3, 1, 0);
     expect(l.x).toHaveLength(3);
@@ -499,17 +505,26 @@ export function parseLayout(
       `${treeEdges} tree edges / ${crosslinkCount} crosslinks, got ${buf.byteLength}`,
     );
   }
-  // Normalize: a Buffer passed directly would produce garbage views because
-  // its byteOffset is not accounted for by the typed-array constructor.
-  const ab = buf instanceof ArrayBuffer
-    ? buf
-    : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  // A view's bytes may sit at a non-zero byteOffset inside a larger (and for a
+  // pooled Buffer, possibly unaligned) ArrayBuffer; copy it to offset 0.
+  const bytes = ArrayBuffer.isView(buf)
+    ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+    : buf;
+  const treeEdges = nodeCount - rootCount;
+  const required = nodeCount * 8 + treeEdges * 4 + crosslinkCount * 8;
+  if (bytes.byteLength !== required) {
+    throw new Error(
+      `layout truncated: expected ${required} bytes for ${nodeCount} nodes ` +
+      `(${treeEdges} tree edges at ${rootCount} roots) / ` +
+      `${crosslinkCount} crosslinks, got ${bytes.byteLength}`,
+    );
+  }
   let offset = 0;
   const take = <T extends Float32Array | Uint16Array>(
     Type: new (b: ArrayBuffer, o: number, n: number) => T, n: number,
   ): T => {
-    const view = new Type(ab, offset, n);
-    offset += n * (Type as unknown as { BYTES_PER_ELEMENT: number }).BYTES_PER_ELEMENT;
+    const view = new Type(bytes, offset, n);
+    offset += n * view.BYTES_PER_ELEMENT;
     return view;
   };
   return {
