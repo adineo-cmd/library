@@ -19,26 +19,36 @@ export function loadMeta(raw: unknown): Meta {
 
 /**
  * Decompose the packed layout buffer. Section order and widths are fixed by
- * spec section 4.5; any size mismatch is corruption and must throw.
+ * spec section 4.5; any size mismatch is corruption and must throw. The format
+ * has no header, so the tree-edge count comes from the caller: the atlas is a
+ * forest, and a forest with `rootCount` roots has `nodeCount - rootCount` edges.
  */
 export function parseLayout(
   buf: ArrayBuffer | ArrayBufferView,
   nodeCount: number,
+  rootCount: number,
   crosslinkCount: number,
 ): LayoutArrays {
   if (nodeCount > MAX_NODES) {
     throw new Error(`layout: nodeCount ${nodeCount} exceeds the Uint16 index limit of ${MAX_NODES}`);
+  }
+  if (rootCount < 1 || rootCount > nodeCount) {
+    throw new Error(
+      `layout: rootCount ${rootCount} is out of range for ${nodeCount} nodes; ` +
+      `every forest has at least 1 root and at most one per node`,
+    );
   }
   // A view's bytes may sit at a non-zero byteOffset inside a larger (and for a
   // pooled Buffer, possibly unaligned) ArrayBuffer; copy it to offset 0.
   const bytes = ArrayBuffer.isView(buf)
     ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
     : buf;
-  const treeEdges = nodeCount - 1;
+  const treeEdges = nodeCount - rootCount;
   const required = nodeCount * 8 + treeEdges * 4 + crosslinkCount * 8;
   if (bytes.byteLength !== required) {
     throw new Error(
-      `layout truncated: expected ${required} bytes for ${nodeCount} nodes / ` +
+      `layout truncated: expected ${required} bytes for ${nodeCount} nodes ` +
+      `(${treeEdges} tree edges at ${rootCount} roots) / ` +
       `${crosslinkCount} crosslinks, got ${bytes.byteLength}`,
     );
   }
