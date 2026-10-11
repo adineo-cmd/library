@@ -580,6 +580,20 @@ git commit -m "feat(lib): artifact schema, zod validation and binary layout deco
 
 ## Task 3: Ingest — stream the dumps into SQLite
 
+> **Schema correction (controller-ruled).** The real `categorylinks` schema is
+> `(cl_from, cl_sortkey, cl_timestamp, cl_sortkey_prefix, cl_type, cl_collation_id, cl_target_id)`.
+> There is **no title column**, and `cl_target_id` is `category.cat_id`, **not** a
+> `page_id`. This task therefore requires a **third** dump, `enwiki-latest-category.sql.gz` (35 MB),
+> whose `category` table is `(cat_id, cat_title, cat_pages, cat_subcats, cat_files)` with
+> `cat_id` joining only to `cl_target_id`.
+>
+> - category name for a link target comes from `category.cat_title`, keyed by `cl_target_id`
+> - category→category edge exists when `cl_from` is an ns-14 page; edge is `title(cl_from page) -> cat_title`
+> - **the significance signal is `category.cat_pages`**, authoritative and pre-computed by MediaWiki,
+>   not a count of `categorylinks` rows
+>
+> `member` rows are still required for Task 7 co-occurrence, keyed by `cl_from`.
+
 **Files:**
 - Create: `scripts/lib/sql-stream.mjs`, `scripts/lib/categories.mjs`, `scripts/lib/db.mjs`, `scripts/ingest.mjs`
 - Test: `scripts/lib/__tests__/sql-stream.test.mjs`, `categories.test.mjs`, `db.test.mjs`
@@ -598,7 +612,7 @@ git commit -m "feat(lib): artifact schema, zod validation and binary layout deco
   export function openDb(path)                 // -> Database with schema created
   export function assignStableIds(db)          // renumbers cat.id alphabetically, remaps FKs
   export function finalizeIndexes(db)
-  export const PATHS                           // { page, categorylinks, db }
+  export const PATHS                           // { page, category, categorylinks, db }
   export const INGEST_STATS                    // populated after a run
   export async function ingest()
   ```
@@ -1032,9 +1046,16 @@ import { openDb, assignStableIds, finalizeIndexes } from './lib/db.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORK = resolve(ROOT, 'atlas-work');
 
+// Dumps live at the PARENT of the repo by default; ATLAS_DUMP_DIR overrides.
+// A hardcoded repo-relative path breaks on any other machine or layout.
+const DUMP_DIR = process.env.ATLAS_DUMP_DIR
+  ? resolve(process.env.ATLAS_DUMP_DIR)
+  : (existsSync(resolve(ROOT, 'enwiki-latest-page.sql.gz')) ? ROOT : resolve(ROOT, '..'));
+
 export const PATHS = {
-  page: resolve(ROOT, 'enwiki-latest-page.sql.gz'),
-  categorylinks: resolve(ROOT, 'enwiki-latest-categorylinks.sql.gz'),
+  page: resolve(DUMP_DIR, 'enwiki-latest-page.sql.gz'),
+  category: resolve(DUMP_DIR, 'enwiki-latest-category.sql.gz'),
+  categorylinks: resolve(DUMP_DIR, 'enwiki-latest-categorylinks.sql.gz'),
   db: resolve(WORK, 'atlas.db'),
 };
 
@@ -1043,7 +1064,7 @@ export const INGEST_STATS = {
 };
 
 export function missingInputs() {
-  return [PATHS.page, PATHS.categorylinks].filter(p => !existsSync(p));
+  return [PATHS.page, PATHS.category, PATHS.categorylinks].filter(p => !existsSync(p));
 }
 
 export async function ingest() {
@@ -1715,6 +1736,11 @@ export const DEFAULT_SOURCES = [
   {
     name: 'English Wikipedia page table (namespace 14)',
     url: 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-page.sql.gz',
+    license: 'CC BY-SA 4.0 / GFDL',
+  },
+  {
+    name: 'English Wikipedia category table',
+    url: 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-category.sql.gz',
     license: 'CC BY-SA 4.0 / GFDL',
   },
   {
@@ -2501,7 +2527,7 @@ git commit -m "feat(scripts): artifact build orchestrator with injectable databa
 - [ ] **Step 7: Run the real pipeline against the 4.6 GB dumps**
 
 ```bash
-ls -lh ../enwiki-latest-page.sql.gz ../enwiki-latest-categorylinks.sql.gz
+ls -lh ../enwiki-latest-page.sql.gz ../enwiki-latest-categorylinks.sql.gz ../enwiki-latest-category.sql.gz
 time npm run ingest
 time npm run build:artifacts
 ```
