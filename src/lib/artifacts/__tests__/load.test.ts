@@ -59,8 +59,8 @@ describe('loadCrosslinks', () => {
 });
 
 describe('parseLayout', () => {
-  const build = (nodeCount: number, crosslinkCount: number) =>
-    new ArrayBuffer(nodeCount * 8 + (nodeCount - 1) * 4 + crosslinkCount * 8);
+  const build = (nodeCount: number, rootCount: number, crosslinkCount: number) =>
+    new ArrayBuffer(nodeCount * 8 + (nodeCount - rootCount) * 4 + crosslinkCount * 8);
 
   const LAYOUT_BYTES = 3 * 8 + 2 * 4 + 1 * 8;
 
@@ -77,7 +77,7 @@ describe('parseLayout', () => {
   };
 
   it('returns arrays matching the node and crosslink counts', () => {
-    const l = parseLayout(build(3, 1), 3, 1);
+    const l = parseLayout(build(3, 1, 1), 3, 1, 1);
     expect(l.x).toBeInstanceOf(Float32Array);
     expect(l.x).toHaveLength(3);
     expect(l.treeSrc).toHaveLength(2);
@@ -85,13 +85,24 @@ describe('parseLayout', () => {
     expect(l.crossWeight).toHaveLength(1);
   });
   it('throws when the buffer is shorter than the declared layout', () => {
-    expect(() => parseLayout(new ArrayBuffer(8), 3, 0)).toThrow(/truncated|layout/i);
+    expect(() => parseLayout(new ArrayBuffer(8), 3, 1, 0)).toThrow(/truncated|layout/i);
   });
   it('throws when the node count exceeds the Uint16 index limit', () => {
-    expect(() => parseLayout(new ArrayBuffer(4), 70_000, 0)).toThrow(/65535|Uint16/i);
+    expect(() => parseLayout(new ArrayBuffer(4), 70_000, 1, 0)).toThrow(/65535|Uint16/i);
+  });
+  it('sizes the tree sections by roots, so a forest decodes', () => {
+    const l = parseLayout(build(4, 2, 1), 4, 2, 1);
+    expect(l.x).toHaveLength(4);
+    expect(l.treeSrc).toHaveLength(2);
+    expect(l.treeDst).toHaveLength(2);
+    expect(l.crossSrc).toHaveLength(1);
+  });
+  it('throws when rootCount is below 1 or above nodeCount', () => {
+    expect(() => parseLayout(build(3, 1, 0), 3, 0, 0)).toThrow(/rootCount/i);
+    expect(() => parseLayout(build(3, 1, 0), 3, 4, 0)).toThrow(/rootCount/i);
   });
   it('reads each section from its own offset, in spec 4.5 order', () => {
-    const l = parseLayout(packed(), 3, 1);
+    const l = parseLayout(packed(), 3, 1, 1);
     expect([...l.x]).toEqual([1, 2, 3]);
     expect([...l.y]).toEqual([4, 5, 6]);
     expect([...l.treeSrc]).toEqual([0, 1]);
@@ -105,8 +116,8 @@ describe('parseLayout', () => {
     const view = new Uint8Array(backing, 16, LAYOUT_BYTES);
     view.set(new Uint8Array(packed()));
     expect(view.byteOffset).toBe(16);
-    const direct = parseLayout(view, 3, 1);
-    const sliced = parseLayout(backing.slice(16, 16 + LAYOUT_BYTES), 3, 1);
+    const direct = parseLayout(view, 3, 1, 1);
+    const sliced = parseLayout(backing.slice(16, 16 + LAYOUT_BYTES), 3, 1, 1);
     expect([...direct.x]).toEqual([1, 2, 3]);
     expect([...direct.crossWeight]).toEqual([7]);
     expect([...sliced.x]).toEqual([1, 2, 3]);
