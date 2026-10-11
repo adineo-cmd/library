@@ -2245,7 +2245,9 @@ describe('buildAll end to end', () => {
   it('emits a layout whose byte length matches the declared node count', () => {
     const c = loadConcepts(result.concepts);
     const x = loadCrosslinks(result.crosslinks);
-    expect(parseLayout(result.layoutBuffer, c.nodeCount, x.edges.length).x)
+    // The tree is a forest: derive rootCount, never assume 1.
+    const rootCount = c.nodes.filter(n => n.parent === -1).length;
+    expect(parseLayout(result.layoutBuffer, c.nodeCount, rootCount, x.edges.length).x)
       .toHaveLength(c.nodeCount);
   });
   it('filters the CS1 maintenance category', () => {
