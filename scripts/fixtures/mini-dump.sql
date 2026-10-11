@@ -21,15 +21,19 @@ CREATE TABLE `page` (
 ) ENGINE=InnoDB DEFAULT CHARSET=binary;
 
 -- cat_id lives in its own id space, unrelated to page_id and much larger:
--- categorylinks.cl_target_id points here, NOT at page.page_id.
+-- categorylinks.cl_target_id points here, NOT at page.page_id. Note the
+-- underscores: dumps store titles this way, the page table does not, and the
+-- two only meet after normalisation.
 CREATE TABLE `category` (
-  `cat_id` int(8) unsigned NOT NULL AUTO_INCREMENT,
+  `cat_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
   `cat_title` varbinary(255) NOT NULL DEFAULT '',
-  `cat_pages` int(8) unsigned NOT NULL DEFAULT '0',
-  `cat_subcats` int(8) unsigned NOT NULL DEFAULT '0',
-  `cat_hidden` tinyint(1) unsigned NOT NULL DEFAULT '0',
-  PRIMARY KEY (`cat_id`,`cat_title`)
-) ENGINE=InnoDB DEFAULT CHARSET=binary;
+  `cat_pages` int(11) NOT NULL DEFAULT '0',
+  `cat_subcats` int(11) NOT NULL DEFAULT '0',
+  `cat_files` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`cat_id`),
+  UNIQUE KEY `cat_title` (`cat_title`),
+  KEY `cat_pages` (`cat_pages`)
+) ENGINE=InnoDB AUTO_INCREMENT=250564340 DEFAULT CHARSET=binary;
 
 -- cl_from  = the page that carries the link
 -- cl_type  = what that page is ('subcat' links categories to their parent)
@@ -59,14 +63,14 @@ INSERT INTO `page` VALUES
 
 -- Page 3 listing itself under its own category is not possible on Wikipedia
 -- but costs nothing to model here: ingest drops self edges.
+-- cat_pages is deliberately NOT the number of categorylinks rows pointing here
+-- (5/2/3 against member counts of 2/1/1): Task 6 must read the authoritative
+-- count rather than counting member rows.
 INSERT INTO `category` VALUES
-(24745139,'Achilles',10,1,0),
-(27206937,'Anarchism',30,2,0),
-(51529579,'Autism spectrum',20,1,0),
-(70122884,'Physical sciences',5,2,0),
-(70122885,'Thermodynamics',4,1,0),
-(70122886,'Information theory',3,1,0),
-(70122887,'CS1 references categories',1,1,0);
+(70122884,'Physical_sciences',5,2,0),
+(70122885,'Thermodynamics',4,1,1),
+(70122886,'Information_theory',3,1,0),
+(70122887,'CS1_references_categories',1,1,0);
 
 INSERT INTO `categorylinks` VALUES
 (3,'PHYSICALSCIENCES','2026-07-07 10:01:29','','subcat',1,70122884),

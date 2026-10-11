@@ -1,7 +1,16 @@
 import Database from 'better-sqlite3';
 
+export const CAT_TABLE = 'CREATE TABLE cat ('
+  + 'id INTEGER PRIMARY KEY, '
+  + 'name TEXT NOT NULL UNIQUE, '
+  // Authoritative significance, computed by MediaWiki and copied straight from
+  // category.cat_pages. Counting member rows instead would undercount: it only
+  // sees links that survived the meta filter.
+  + 'cat_pages INTEGER NOT NULL DEFAULT 0, '
+  + 'cat_subcats INTEGER NOT NULL DEFAULT 0)';
+
 export const SCHEMA = [
-  'CREATE TABLE cat (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)',
+  CAT_TABLE,
   'CREATE TABLE parent (child INTEGER NOT NULL, parent INTEGER NOT NULL)',
   'CREATE TABLE member (article TEXT NOT NULL, cat INTEGER NOT NULL)',
 ];
@@ -27,8 +36,10 @@ export function openDb(path) {
 export function assignStableIds(db) {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('ALTER TABLE cat RENAME TO cat_raw');
-  db.exec('CREATE TABLE cat (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)');
-  db.exec('INSERT INTO cat(id, name) SELECT ROW_NUMBER() OVER (ORDER BY name), name FROM cat_raw');
+  db.exec(CAT_TABLE);
+  db.exec(`INSERT INTO cat(id, name, cat_pages, cat_subcats)
+            SELECT ROW_NUMBER() OVER (ORDER BY name), name, cat_pages, cat_subcats
+            FROM cat_raw`);
 
   // Old id to new id, used by both edge tables below.
   db.exec('CREATE TABLE id_map (old_id INTEGER PRIMARY KEY, new_id INTEGER NOT NULL)');
