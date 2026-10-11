@@ -182,7 +182,40 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 6: Verify `better-sqlite3` loads natively**
+- [ ] **Step 6: Configure TypeScript**
+
+`tsconfig.json` extends the Astro starter's strict config but carries three settings this Svelte project does not use, and `baseUrl` is a hard error on TypeScript 6.0.3 (`TS5101: Option 'baseUrl' is deprecated`), which breaks `tsc --noEmit` and `astro check` project-wide.
+
+- The `@/*`, `@components/*`, `@data/*`, `@utils/*` path aliases are referenced by nothing in this codebase or the plan.
+- `jsx` / `jsxImportSource: "react"` are for JSX; this is a Svelte project with no JSX.
+
+Replace the whole file with:
+
+```json
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "strictNullChecks": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.astro",
+    "src/**/*.svelte",
+    "scripts/**/*.mjs"
+  ],
+  "exclude": ["node_modules", "dist", ".astro"]
+}
+```
+
+Verify:
+
+```bash
+npx tsc --noEmit
+```
+
+Expected: no `TS5101`. If path aliases are ever genuinely needed, reintroduce them using TypeScript 6's `paths` without `baseUrl` — do not add `ignoreDeprecations`, which suppresses the symptom on a setting nothing uses.
+
+- [ ] **Step 7: Verify `better-sqlite3` loads natively**
 
 ```bash
 node -e "const D=require('better-sqlite3');const d=new D(':memory:');d.exec('create table t(a)');console.log('sqlite ok',d.prepare('select 1 as x').get().x)"
@@ -190,7 +223,7 @@ node -e "const D=require('better-sqlite3');const d=new D(':memory:');d.exec('cre
 
 Expected: `sqlite ok 1`. If it fails, run `npm rebuild better-sqlite3` and stop if it still fails.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -220,7 +253,11 @@ git commit -m "chore: strip dead loaders and views, add pipeline and test deps"
   export function loadConcepts(raw: unknown): ConceptsFile;      // throws on invalid
   export function loadCrosslinks(raw: unknown): CrosslinksFile;  // throws on invalid
   export function loadMeta(raw: unknown): Meta;                  // throws on invalid
-  export function parseLayout(buf: ArrayBuffer, nodeCount: number, crosslinkCount: number): LayoutArrays;
+  // rootCount is REQUIRED: the tree is a forest, so tree edges = nodeCount - rootCount.
+  // Derive it from concepts.json: nodes.filter(n => n.parent === -1).length
+  export function parseLayout(
+    buf: ArrayBuffer, nodeCount: number, rootCount: number, crosslinkCount: number,
+  ): LayoutArrays;
   export function slugify(name: string): string;
   ```
 
@@ -287,22 +324,37 @@ describe('loadCrosslinks', () => {
 });
 
 describe('parseLayout', () => {
-  const build = (nodeCount: number, crosslinkCount: number) =>
-    new ArrayBuffer(nodeCount * 8 + (nodeCount - 1) * 4 + crosslinkCount * 8);
+  const build = (nodeCount: number, rootCount: number, crosslinkCount: number) =>
+    new ArrayBuffer(nodeCount * 8 + (nodeCount - rootCount) * 4 + crosslinkCount * 8);
 
   it('returns arrays matching the node and crosslink counts', () => {
-    const l = parseLayout(build(3, 1), 3, 1);
+    const l = parseLayout(build(3, 1, 1), 3, 1, 1);
     expect(l.x).toBeInstanceOf(Float32Array);
     expect(l.x).toHaveLength(3);
     expect(l.treeSrc).toHaveLength(2);
     expect(l.crossSrc).toHaveLength(1);
     expect(l.crossWeight).toHaveLength(1);
   });
+  it('handles a forest: 4 nodes with 2 roots has 2 tree edges, not 3', () => {
+    const l = parseLayout(build(4, 2, 0), 4, 2, 0);
+    expect(l.treeSrc).toHaveLength(2);
+  });
   it('throws when the buffer is shorter than the declared layout', () => {
-    expect(() => parseLayout(new ArrayBuffer(8), 3, 0)).toThrow(/truncated|layout/i);
+    expect(() => parseLayout(new ArrayBuffer(8), 3, 1, 0)).toThrow(/truncated|layout/i);
   });
   it('throws when the node count exceeds the Uint16 index limit', () => {
-    expect(() => parseLayout(new ArrayBuffer(4), 70_000, 0)).toThrow(/65535|Uint16/i);
+    expect(() => parseLayout(new ArrayBuffer(4), 70_000, 1, 0)).toThrow(/65535|Uint16/i);
+  });
+  it('throws when rootCount is zero or exceeds nodeCount', () => {
+    const buf = build(3, 1, 0);
+    expect(() => parseLayout(buf, 3, 0, 0)).toThrow(/rootCount/i);
+    expect(() => parseLayout(buf, 3, 4, 0)).toThrow(/rootCount/i);
+  });
+  it('accepts a Buffer view without corrupting coordinates', () => {
+    const { Buffer } = require('node:buffer');
+    const padded = Buffer.concat([Buffer.alloc(8), Buffer.from(build(3, 1, 0))]);
+    const l = parseLayout(padded, 3, 1, 0);
+    expect(l.x).toHaveLength(3);
   });
 });
 ```
@@ -428,23 +480,36 @@ export function loadMeta(raw: unknown): Meta {
 export function parseLayout(
   buf: ArrayBuffer,
   nodeCount: number,
+  rootCount: number,
   crosslinkCount: number,
 ): LayoutArrays {
   if (nodeCount > MAX_NODES) {
     throw new Error(`layout: nodeCount ${nodeCount} exceeds the Uint16 index limit of ${MAX_NODES}`);
   }
-  const treeEdges = nodeCount - 1;
+  if (rootCount < 1 || rootCount > nodeCount) {
+    throw new Error(`layout: rootCount ${rootCount} is not between 1 and ${nodeCount}`);
+  }
+  // The tree is a FOREST. A node with parent === -1 is a root, so the edge
+  // count is nodeCount - rootCount, never nodeCount - 1.
+  const treeEdges = nodeCount - rootCount;
   const required = nodeCount * 8 + treeEdges * 4 + crosslinkCount * 8;
   if (buf.byteLength !== required) {
     throw new Error(
       `layout truncated: expected ${required} bytes for ${nodeCount} nodes / ` +
-      `${crosslinkCount} crosslinks, got ${buf.byteLength}`,
+      `${treeEdges} tree edges / ${crosslinkCount} crosslinks, got ${buf.byteLength}`,
     );
   }
+  // Normalize: a Buffer passed directly would produce garbage views because
+  // its byteOffset is not accounted for by the typed-array constructor.
+  const ab = buf instanceof ArrayBuffer
+    ? buf
+    : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   let offset = 0;
-  const take = <T extends Float32Array | Uint16Array>(Type: new (b: ArrayBuffer, o: number, n: number) => T, n: number): T => {
-    const view = new Type(buf, offset, n);
-    offset += n * Type.BYTES_PER_ELEMENT;
+  const take = <T extends Float32Array | Uint16Array>(
+    Type: new (b: ArrayBuffer, o: number, n: number) => T, n: number,
+  ): T => {
+    const view = new Type(ab, offset, n);
+    offset += n * (Type as unknown as { BYTES_PER_ELEMENT: number }).BYTES_PER_ELEMENT;
     return view;
   };
   return {
@@ -1929,6 +1994,17 @@ describe('packLayout', () => {
     const buf = packLayout(computePositions(nodes), [{ a: 1, b: 2, shared: 4 }]);
     expect(buf.byteLength).toBe(3 * 8 + 2 * 4 + 8);
   });
+  it('round-trips through parseLayout with the correct rootCount', () => {
+    const buf = packLayout(computePositions(nodes), []);
+    const parsed = parseLayout(buf, 3, 1, 0);
+    expect(parsed.x).toHaveLength(3);
+    expect(parsed.treeSrc).toHaveLength(2);
+  });
+  it('throws when the edge count implies zero roots', () => {
+    const p = computePositions(nodes);
+    expect(() => packLayout({ ...p, treeSrc: new Uint16Array(3), treeDst: new Uint16Array(3) }, []))
+      .toThrow(/root/i);
+  });
 });
 
 describe('layoutInputHash', () => {
@@ -2026,6 +2102,13 @@ export function computePositions(nodes, opts = {}) {
 /** Section order is fixed by spec section 4.5 and must match parseLayout. */
 export function packLayout(positions, crosslinks) {
   const { x, y, treeSrc, treeDst } = positions;
+  // The tree is a forest: tree edges = nodeCount - rootCount, which must equal
+  // the number of links actually emitted. A mismatch means a node's parent
+  // index is missing or duplicated upstream.
+  const rootCount = x.length - treeSrc.length;
+  if (rootCount < 1) {
+    throw new Error(`layout: ${x.length} nodes with ${treeSrc.length} tree edges implies ${rootCount} roots`);
+  }
   const n = crosslinks.length;
   const crossSrc = new Uint16Array(n);
   const crossDst = new Uint16Array(n);
@@ -3921,6 +4004,7 @@ const index = buildIndex(concepts, crosslinks.edges);
 const layout = parseLayout(
   await fetch(new URL('../data/artifacts/layout.bin', import.meta.url)).then(r => r.arrayBuffer()),
   concepts.nodeCount,
+  concepts.nodes.filter(n => n.parent === -1).length,
   crosslinks.edges.length,
 );
 ---
@@ -3981,13 +4065,16 @@ const present = existsSync(resolve(DIR, 'concepts.json'));
 describe.skipIf(!present)('artifact contract', () => {
   const concepts = loadConcepts(JSON.parse(readFileSync(resolve(DIR, 'concepts.json'), 'utf8')));
   const crosslinks = loadCrosslinks(JSON.parse(readFileSync(resolve(DIR, 'crosslinks.json'), 'utf8')));
-  const meta = loadMeta(JSON.parse(readFileSync(resolve(DIR, 'meta.json'), 'utf8')));
-  const layoutBuf = readFileSync(resolve(DIR, 'layout.bin'));
-  const layout = parseLayout(
-    layoutBuf.buffer.slice(layoutBuf.byteOffset, layoutBuf.byteOffset + layoutBuf.byteLength) as ArrayBuffer,
-    concepts.nodeCount,
-    crosslinks.edges.length,
-  );
+const meta = loadMeta(JSON.parse(readFileSync(resolve(DIR, 'meta.json'), 'utf8')));
+const layoutBuf = readFileSync(resolve(DIR, 'layout.bin'));
+// The tree is a forest: derive rootCount, never assume 1.
+const rootCount = concepts.nodes.filter(n => n.parent === -1).length;
+const layout = parseLayout(
+  layoutBuf.buffer.slice(layoutBuf.byteOffset, layoutBuf.byteOffset + layoutBuf.byteLength) as ArrayBuffer,
+  concepts.nodeCount,
+  rootCount,
+  crosslinks.edges.length,
+);
 
   it('every tree edge endpoint exists', () => {
     for (let e = 0; e < layout.treeSrc.length; e++) {
