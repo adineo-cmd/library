@@ -583,9 +583,20 @@ git commit -m "feat(lib): artifact schema, zod validation and binary layout deco
 > **Schema correction (controller-ruled).** The real `categorylinks` schema is
 > `(cl_from, cl_sortkey, cl_timestamp, cl_sortkey_prefix, cl_type, cl_collation_id, cl_target_id)`.
 > There is **no title column**, and `cl_target_id` is `category.cat_id`, **not** a
-> `page_id`. This task therefore requires a **third** dump, `enwiki-latest-category.sql.gz` (35 MB),
-> whose `category` table is `(cat_id, cat_title, cat_pages, cat_subcats, cat_files)` with
-> `cat_id` joining only to `cl_target_id`.
+> `page_id`. This task therefore requires a **third** dump, the `category` table
+> `(cat_id, cat_title, cat_pages, cat_subcats, cat_files)`.
+>
+> **The three dumps MUST come from one dated snapshot directory.** The `latest/`
+> files are not a coherent set: `page`/`categorylinks` dated 2026-08-05 against
+> `category` dated 2026-10-08, and measured resolution of `cl_target_id` against
+> `cat_id` was **0.64%** — 99.4% of links silently discarded while the script
+> exited 0. Download all three from e.g. `https://dumps.wikimedia.org/enwiki/20260801/`.
+>
+> **Consequence — this task must fail loudly.** `ingest()` throws if the
+> `cl_target_id -> cat_id` resolution rate is below 0.9, and asserts non-trivial
+> `keptMembers`. It validates input schemas **before** deleting any existing
+> database. A silent 99% row loss after a multi-hour run is the failure mode this
+> exists to prevent.
 >
 > - category name for a link target comes from `category.cat_title`, keyed by `cl_target_id`
 > - category→category edge exists when `cl_from` is an ns-14 page; edge is `title(cl_from page) -> cat_title`
@@ -1061,7 +1072,11 @@ export const PATHS = {
 
 export const INGEST_STATS = {
   rawCategories: 0, afterMetaFilter: 0, keptParents: 0, keptMembers: 0,
+  linkRows: 0, resolvedTargets: 0, targetResolution: 0,
 };
+
+/** Below this, the dump set is mismatched — refuse to continue. */
+export const MIN_TARGET_RESOLUTION = 0.9;
 
 export function missingInputs() {
   return [PATHS.page, PATHS.category, PATHS.categorylinks].filter(p => !existsSync(p));
@@ -1069,6 +1084,17 @@ export function missingInputs() {
 
 export async function ingest() {
   mkdirSync(WORK, { recursive: true });
+
+  // Validate inputs BEFORE destroying any existing database. A failed run must
+  // never destroy a prior multi-hour result.
+  const missing = missingInputs();
+  if (missing.length) throw new Error('Missing input dumps:\n  ' + missing.join('\n  '));
+  const schemas = {};
+  for (const [key, path] of Object.entries({ page: PATHS.page, category: PATHS.category, categorylinks: PATHS.categorylinks })) {
+    schemas[key] = await readDumpSchema(path);
+    if (!schemas[key].size) throw new Error(`No CREATE TABLE found in ${path}; dump looks wrong`);
+  }
+
   for (const suffix of ['', '-wal', '-shm']) {
     if (existsSync(PATHS.db + suffix)) rmSync(PATHS.db + suffix);
   }
@@ -1108,21 +1134,23 @@ export async function ingest() {
     if (id !== undefined) idByPageId.set(v[0], id);
   });
 
-  // --- Pass B: categorylinks -> category->category edges + article counts ---
-  // `article` is the page_id string. Article identity is only ever used to
-  // count co-membership, never displayed, so a title join is unnecessary.
+  // --- Pass B: categorylinks -> category->category edges + membership ---
+  // `member.article` holds the cl_from page_id. Article identity is only ever
+  // used to count co-membership between categories, never displayed, so a
+  // title join is unnecessary. The category NAME comes from the category dump
+  // via cl_target_id -> cat_id, NOT from a column in categorylinks (there
+  // is none).
+  let linkRows = 0;
+  let resolvedTargets = 0;
+
   const flushMembers = db.transaction((rows) => {
-    for (const [article, catName] of rows) {
-      const id = idByName.get(catName);
-      if (id !== undefined) insMember.run(article, id);
-    }
+    for (const [article, catId] of rows) insMember.run(article, catId);
   });
   const flushParents = db.transaction((rows) => {
-    for (const [childPageId, parentName] of rows) {
-      const parentId = idByName.get(parentName);
+    for (const [childPageId, parentCatId] of rows) {
       const childId = idByPageId.get(childPageId);
-      if (parentId === undefined || childId === undefined) continue;
-      insParent.run(childId, parentId);
+      if (childId === undefined) continue;
+      insParent.run(childId, parentCatId);
     }
   });
 
@@ -1130,11 +1158,13 @@ export async function ingest() {
   const parentBatch = [];
   await streamInsertRows(PATHS.categorylinks, (table, v) => {
     if (table !== 'categorylinks') return;
-    const pageId = v[0];
-    const catName = normalizeCategoryName(v[2]);
-    if (!idByName.has(catName)) return;
-    memberBatch.push([pageId, catName]);
-    if (idByPageId.has(pageId)) parentBatch.push([pageId, catName]);
+    linkRows++;
+    const pageId = v[CL_FROM];
+    const parentCatId = idByCatId.get(Number(v[CL_TARGET_ID]));
+    if (parentCatId === undefined) return;   // unresolvable target; counted by the guard
+    resolvedTargets++;
+    memberBatch.push([pageId, parentCatId]);
+    if (idByPageId.has(pageId)) parentBatch.push([pageId, parentCatId]);
     if (memberBatch.length >= 50_000) { flushMembers(memberBatch.splice(0)); }
     if (parentBatch.length >= 50_000) { flushParents(parentBatch.splice(0)); }
   });
@@ -1146,6 +1176,29 @@ export async function ingest() {
   INGEST_STATS.keptMembers = db.prepare('SELECT COUNT(*) AS n FROM member').get().n;
 
   finalizeIndexes(db);
+
+  // --- Fail loudly on catastrophic row loss -------------------------------
+  // A dump set from mismatched dates resolves cl_target_id against cat_id for
+  // only ~0.6% of rows while every counter still looks plausible. That must
+  // never pass silently: it costs hours and produces a graph that looks valid.
+  INGEST_STATS.linkRows = linkRows;
+  INGEST_STATS.resolvedTargets = resolvedTargets;
+  const rate = linkRows > 0 ? resolvedTargets / linkRows : 0;
+  INGEST_STATS.targetResolution = rate;
+  console.log(`cl_target_id -> cat_id resolution: ${resolvedTargets}/${linkRows} (${(rate*100).toFixed(2)}%)`);
+  if (rate < MIN_TARGET_RESOLUTION) {
+    throw new Error(
+      `Only ${(rate*100).toFixed(2)}% of categorylinks rows resolved to a category ` +
+      `(< ${(MIN_TARGET_RESOLUTION*100).toFixed(0)}% required). The dumps are almost ` +
+      `certainly from different snapshot dates. Download page, category and ` +
+      `categorylinks from ONE dated directory, e.g. ` +
+      `https://dumps.wikimedia.org/enwiki/20260801/.`,
+    );
+  }
+  if (INGEST_STATS.keptMembers === 0) {
+    throw new Error('ingest produced zero member rows');
+  }
+
   db.close();
   return INGEST_STATS;
 }
@@ -1874,9 +1927,11 @@ export const DEFAULTS = {
 
 /** Cat ids with enough articles to have meaningful neighbours, plus a sample of each. */
 export function selectMemberSample(db, minArticleCount, sample) {
-  const eligible = db.prepare(
-    'SELECT id FROM cat WHERE id IN (SELECT cat FROM member GROUP BY cat HAVING COUNT(*) >= ?)',
-  ).all(minArticleCount).map(r => r.id);
+  // cat_pages is MediaWiki's own authoritative count. Counting member rows is
+  // badly wrong: member holds only rows that survived the meta filter, so a
+  // category like "Unprintworthy redirects" (1.97M pages, filtered away)
+  // would read as near-empty.
+  const eligible = db.prepare('SELECT id FROM cat WHERE cat_pages >= ?').all(minArticleCount).map(r => r.id);
   const stmt = db.prepare('SELECT article FROM member WHERE cat = ? LIMIT ?');
   const samples = new Map();
   for (const id of eligible) samples.set(id, new Set(stmt.all(id, sample).map(r => r.article)));
@@ -2362,10 +2417,12 @@ export function pruneToNodes(db, params) {
     parentsByChild[child].push(parent);
   }
 
+  // cat_pages is MediaWiki's authoritative article count (see Task 3). Counting
+  // member rows undercounts badly because member only holds meta-filtered rows.
   const articleCount = new Int32Array(nodeCount);
-  for (const r of db.prepare('SELECT cat, COUNT(*) AS n FROM member GROUP BY cat').all()) {
-    const i = dbIndex.get(r.cat);
-    if (i !== undefined) articleCount[i] = r.n;
+  for (const r of db.prepare('SELECT id, cat_pages FROM cat').all()) {
+    const i = dbIndex.get(r.id);
+    if (i !== undefined) articleCount[i] = r.cat_pages;
   }
 
   // Pass 2
