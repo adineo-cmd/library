@@ -580,30 +580,42 @@ git commit -m "feat(lib): artifact schema, zod validation and binary layout deco
 
 ## Task 3: Ingest — stream the dumps into SQLite
 
-> **Schema correction (controller-ruled).** The real `categorylinks` schema is
+> **Schema correction (controller-ruled, empirically verified).** The real
+> `categorylinks` schema is
 > `(cl_from, cl_sortkey, cl_timestamp, cl_sortkey_prefix, cl_type, cl_collation_id, cl_target_id)`.
-> There is **no title column**, and `cl_target_id` is `category.cat_id`, **not** a
-> `page_id`. This task therefore requires a **third** dump, the `category` table
-> `(cat_id, cat_title, cat_pages, cat_subcats, cat_files)`.
+> There is **no title column**, and — critically — **`cl_target_id` is a `linktarget.lt_id`,
+> not a `category.cat_id` and not a `page_id`.**
 >
-> **The three dumps MUST come from one dated snapshot directory.** The `latest/`
-> files are not a coherent set: `page`/`categorylinks` dated 2026-08-05 against
-> `category` dated 2026-10-08, and measured resolution of `cl_target_id` against
-> `cat_id` was **0.64%** — 99.4% of links silently discarded while the script
-> exited 0. Download all three from e.g. `https://dumps.wikimedia.org/enwiki/20260801/`.
+> Measured: resolving `cl_target_id` against `category.cat_id` yields **0.64%**; against ns-14
+> `page_id` yields **~0%**; a full 222,744,137-row scan found **zero** matches for the cat_ids of
+> Physics, Film, Biology, Chemistry, History, Mathematics and Music. The id space is independent
+> of both, which is exactly what `linktarget` predicts.
 >
-> **Consequence — this task must fail loudly.** `ingest()` throws if the
-> `cl_target_id -> cat_id` resolution rate is below 0.9, and asserts non-trivial
-> `keptMembers`. It validates input schemas **before** deleting any existing
-> database. A silent 99% row loss after a multi-hour run is the failure mode this
-> exists to prevent.
+> This task therefore requires a **fourth** dump, `enwiki-latest-linktarget.sql.gz` (1.44 GB):
 >
-> - category name for a link target comes from `category.cat_title`, keyed by `cl_target_id`
-> - category→category edge exists when `cl_from` is an ns-14 page; edge is `title(cl_from page) -> cat_title`
-> - **the significance signal is `category.cat_pages`**, authoritative and pre-computed by MediaWiki,
->   not a count of `categorylinks` rows
+> ```sql
+> CREATE TABLE `linktarget` (
+>   lt_id bigint unsigned AUTO_INCREMENT,
+>   lt_namespace int NOT NULL,     -- 14 = category
+>   lt_title varbinary(255) NOT NULL,   -- underscores, like page_title? NO: like cat_title
+>   PRIMARY KEY (lt_id)
+> )
+> ```
+>
+> **The join:** `cl_target_id -> linktarget.lt_id -> lt_title` (filtered `lt_namespace = 14`).
+>
+> - category→category edge: when `cl_from` is an ns-14 page named X, edge is `X -> lt_title`
+> - **significance signal is `category.cat_pages`**, authoritative and pre-computed by MediaWiki
 >
 > `member` rows are still required for Task 7 co-occurrence, keyed by `cl_from`.
+>
+> **Dump date consistency is a separate requirement:** the four dumps must come from one dated
+> directory. `lt_id` values are stable across snapshots, but a mixed set still silently degrades.
+>
+> **Consequence — this task must fail loudly.** `ingest()` throws if the
+> `cl_target_id -> lt_title` resolution rate is below 0.9, asserts non-trivial `keptMembers`,
+> and validates input schemas **before** deleting any existing database. A silent 99% row loss
+> after a multi-hour run is the failure mode this exists to prevent.
 
 **Files:**
 - Create: `scripts/lib/sql-stream.mjs`, `scripts/lib/categories.mjs`, `scripts/lib/db.mjs`, `scripts/ingest.mjs`
@@ -1067,6 +1079,7 @@ export const PATHS = {
   page: resolve(DUMP_DIR, 'enwiki-latest-page.sql.gz'),
   category: resolve(DUMP_DIR, 'enwiki-latest-category.sql.gz'),
   categorylinks: resolve(DUMP_DIR, 'enwiki-latest-categorylinks.sql.gz'),
+  linktarget: resolve(DUMP_DIR, 'enwiki-latest-linktarget.sql.gz'),
   db: resolve(WORK, 'atlas.db'),
 };
 
@@ -1079,7 +1092,8 @@ export const INGEST_STATS = {
 export const MIN_TARGET_RESOLUTION = 0.9;
 
 export function missingInputs() {
-  return [PATHS.page, PATHS.category, PATHS.categorylinks].filter(p => !existsSync(p));
+  return [PATHS.page, PATHS.category, PATHS.categorylinks, PATHS.linktarget]
+    .filter(p => !existsSync(p));
 }
 
 export async function ingest() {
@@ -1090,7 +1104,10 @@ export async function ingest() {
   const missing = missingInputs();
   if (missing.length) throw new Error('Missing input dumps:\n  ' + missing.join('\n  '));
   const schemas = {};
-  for (const [key, path] of Object.entries({ page: PATHS.page, category: PATHS.category, categorylinks: PATHS.categorylinks })) {
+  for (const [key, path] of Object.entries({
+    page: PATHS.page, category: PATHS.category,
+    categorylinks: PATHS.categorylinks, linktarget: PATHS.linktarget,
+  })) {
     schemas[key] = await readDumpSchema(path);
     if (!schemas[key].size) throw new Error(`No CREATE TABLE found in ${path}; dump looks wrong`);
   }
@@ -1134,6 +1151,24 @@ export async function ingest() {
     if (id !== undefined) idByPageId.set(v[0], id);
   });
 
+  // --- Pass A2: linktarget -> lt_id -> category name --------------------
+  // cl_target_id is a linktarget.lt_id. ONLY namespace 14 (category pages)
+  // matter here; other namespaces are article/file/special targets.
+  const ltIdToName = new Map();
+  await streamInsertRows(PATHS.linktarget, (table, v) => {
+    if (table !== 'linktarget') return;
+    if (v[LT_NAMESPACE] !== '14') return;
+    const name = normalizeCategoryName(v[LT_TITLE]);
+    const id = idByName.get(name);
+    if (id !== undefined) ltIdToName.set(Number(v[LT_ID]), id);
+  });
+  if (ltIdToName.size === 0) {
+    throw new Error(
+      'linktarget produced zero ns-14 targets. The linktarget dump must come from the ' +
+      'SAME snapshot date as categorylinks, otherwise lt_id values will not join.',
+    );
+  }
+
   // --- Pass B: categorylinks -> category->category edges + membership ---
   // `member.article` holds the cl_from page_id. Article identity is only ever
   // used to count co-membership between categories, never displayed, so a
@@ -1160,7 +1195,7 @@ export async function ingest() {
     if (table !== 'categorylinks') return;
     linkRows++;
     const pageId = v[CL_FROM];
-    const parentCatId = idByCatId.get(Number(v[CL_TARGET_ID]));
+    const parentCatId = ltIdToName.get(Number(v[CL_TARGET_ID]));
     if (parentCatId === undefined) return;   // unresolvable target; counted by the guard
     resolvedTargets++;
     memberBatch.push([pageId, parentCatId]);
@@ -1799,6 +1834,11 @@ export const DEFAULT_SOURCES = [
   {
     name: 'English Wikipedia categorylinks table',
     url: 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-categorylinks.sql.gz',
+    license: 'CC BY-SA 4.0 / GFDL',
+  },
+  {
+    name: 'English Wikipedia linktarget table',
+    url: 'https://dumps.wikimedia.org/enwiki/latest/enwiki-latest-linktarget.sql.gz',
     license: 'CC BY-SA 4.0 / GFDL',
   },
 ];
