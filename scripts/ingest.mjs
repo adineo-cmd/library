@@ -19,19 +19,35 @@ export const PATHS = {
   page: resolve(DUMP_DIR, 'enwiki-latest-page.sql.gz'),
   category: resolve(DUMP_DIR, 'enwiki-latest-category.sql.gz'),
   categorylinks: resolve(DUMP_DIR, 'enwiki-latest-categorylinks.sql.gz'),
+  linktarget: resolve(DUMP_DIR, 'enwiki-latest-linktarget.sql.gz'),
   db: resolve(WORK, 'atlas.db'),
 };
 
 export const INGEST_STATS = {
   rawCategories: 0, afterMetaFilter: 0, keptParents: 0, keptMembers: 0,
+  linkRows: 0, resolvedTargets: 0, keptTargets: 0, targetResolution: 0,
 };
 
+/**
+ * Below this fraction of resolved `cl_target_id` values the four dumps do not
+ * belong together, and continuing would write a plausible-looking graph with
+ * most of its rows missing.
+ */
+export const MIN_TARGET_RESOLUTION = 0.9;
+
 const CATEGORY_NAMESPACE = '14';
+/** ltIdToName value for a category that resolved but did not survive Pass A. */
+const DROPPED = -1;
 const BATCH = 50_000;
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
-export function missingInputs() {
-  return [PATHS.page, PATHS.category, PATHS.categorylinks].filter(p => !existsSync(p));
+/** Every dump the join needs. `overrides` replaces paths, for tests. */
+const DUMPS = ['page', 'category', 'categorylinks', 'linktarget'];
+
+export function missingInputs(overrides = {}) {
+  return DUMPS
+    .map(key => overrides[key] ?? PATHS[key])
+    .filter(path => !existsSync(path));
 }
 
 /** Position of a column, resolved by name so dump vintages do not matter. */
@@ -52,29 +68,54 @@ function guardWidth(table, row, columns) {
   }
 }
 
-export async function ingest() {
-  mkdirSync(WORK, { recursive: true });
-  for (const suffix of ['', '-wal', '-shm']) {
-    if (existsSync(PATHS.db + suffix)) rmSync(PATHS.db + suffix);
-  }
-  const db = openDb(PATHS.db);
+/**
+ * Stream the four dumps into SQLite. `overrides` replaces any of PATHS, which
+ * is how the tests point the whole pipeline at a fixture.
+ */
+export async function ingest(overrides = {}) {
+  const paths = { ...PATHS, ...overrides };
+  for (const key of Object.keys(INGEST_STATS)) INGEST_STATS[key] = 0;
 
-  const pageSchema = await readDumpSchema(PATHS.page, CHUNK_SIZE);
-  const catSchema = await readDumpSchema(PATHS.category, CHUNK_SIZE);
-  const linksSchema = await readDumpSchema(PATHS.categorylinks, CHUNK_SIZE);
+  // Everything that can fail cheaply happens before the existing database is
+  // deleted. A run that dies an hour in must not also destroy the last good
+  // four-hour result.
+  const missing = missingInputs(paths);
+  if (missing.length) throw new Error('Missing input dumps:\n  ' + missing.join('\n  '));
+
+  const schemas = {};
+  for (const key of DUMPS) {
+    schemas[key] = await readDumpSchema(paths[key], CHUNK_SIZE);
+    if (!schemas[key].size) throw new Error(`No CREATE TABLE found in ${paths[key]}; dump looks wrong`);
+  }
+
+  // Resolve every column index before the old database goes, so a dump that
+  // cannot be read costs nothing but the error.
+  const pageSchema = schemas.page;
+  const catSchema = schemas.category;
+  const linksSchema = schemas.categorylinks;
+  const targetSchema = schemas.linktarget;
   const pageCols = pageSchema.get('page') ?? [];
   const catCols = catSchema.get('category') ?? [];
   const linkCols = linksSchema.get('categorylinks') ?? [];
+  const targetCols = targetSchema.get('linktarget') ?? [];
   const PAGE_ID = column(pageSchema, 'page', 'page_id');
   const PAGE_NS = column(pageSchema, 'page', 'page_namespace');
   const PAGE_TITLE = column(pageSchema, 'page', 'page_title');
-  const CAT_ID = column(catSchema, 'category', 'cat_id');
   const CAT_TITLE = column(catSchema, 'category', 'cat_title');
   const CAT_PAGES = column(catSchema, 'category', 'cat_pages');
   const CAT_SUBCATS = column(catSchema, 'category', 'cat_subcats');
   const CL_FROM = column(linksSchema, 'categorylinks', 'cl_from');
   const CL_TYPE = column(linksSchema, 'categorylinks', 'cl_type');
   const CL_TARGET = column(linksSchema, 'categorylinks', 'cl_target_id');
+  const LT_ID = column(targetSchema, 'linktarget', 'lt_id');
+  const LT_NS = column(targetSchema, 'linktarget', 'lt_namespace');
+  const LT_TITLE = column(targetSchema, 'linktarget', 'lt_title');
+
+  mkdirSync(dirname(paths.db), { recursive: true });
+  for (const suffix of ['', '-wal', '-shm']) {
+    if (existsSync(paths.db + suffix)) rmSync(paths.db + suffix);
+  }
+  const db = openDb(paths.db);
 
   const insCat = db.prepare('INSERT OR IGNORE INTO cat(name,cat_pages,cat_subcats) VALUES (?,?,?)');
   const insParent = db.prepare('INSERT INTO parent(child,parent) VALUES (?,?)');
@@ -82,40 +123,32 @@ export async function ingest() {
 
   // --- Pass A: the category table, the authoritative category list. ---
   //
-  // Two maps keyed on numbers rather than strings: page ids and cat ids are
-  // small integers, and a numeric Map is both far smaller and faster to probe
-  // than one keyed on strings. The ids stored are provisional; assignStableIds
-  // renumbers cat alphabetically at the end and remaps every foreign key, so
-  // nothing downstream depends on these exact numbers.
-  //
-  // No cat_id -> cat_title map is kept: the title goes straight into SQLite
-  // and only the resulting row id is retained.
-  const idByCatId = new Map();
+  // A name-keyed map rather than an id-keyed one: nothing downstream needs a
+  // cat_id, because categorylinks does not reference one. The ids stored are
+  // provisional; assignStableIds renumbers cat alphabetically at the end and
+  // remaps every foreign key, so nothing depends on these exact numbers.
   const idByName = new Map();
   let rawCategories = 0;
   let guardedCats = false;
 
   const insertCats = db.transaction((batch) => {
-    for (const [catId, name, pages, subcats] of batch) {
+    for (const [name, pages, subcats] of batch) {
       const info = insCat.run(name, pages, subcats);
-      // A name that collides after normalisation is ignored; neither map may
+      // A name that collides after normalisation is ignored; the map may not
       // claim an id for a row that was never created.
-      if (info.changes === 1) {
-        idByCatId.set(catId, info.lastInsertRowid);
-        idByName.set(name, info.lastInsertRowid);
-      }
+      if (info.changes === 1) idByName.set(name, info.lastInsertRowid);
     }
   });
 
   let catBatch = [];
-  await streamInsertRows(PATHS.category, (table, v) => {
+  await streamInsertRows(paths.category, (table, v) => {
     if (table !== 'category') return;
     if (!guardedCats) { guardWidth('category', v, catCols.length); guardedCats = true; }
     rawCategories++;
     const name = normalizeCategoryName(v[CAT_TITLE]);
     if (!name || isMaintenanceCategory(name)) return;
     catBatch.push([
-      Number(v[CAT_ID]), name, Number(v[CAT_PAGES]) || 0, Number(v[CAT_SUBCATS]) || 0,
+      name, Number(v[CAT_PAGES]) || 0, Number(v[CAT_SUBCATS]) || 0,
     ]);
     if (catBatch.length >= BATCH) { insertCats(catBatch); catBatch = []; }
   });
@@ -123,6 +156,46 @@ export async function ingest() {
 
   INGEST_STATS.rawCategories = rawCategories;
   INGEST_STATS.afterMetaFilter = db.prepare('SELECT COUNT(*) AS n FROM cat').get().n;
+
+  // --- Pass A2: linktarget, which is what categorylinks actually points at ---
+  //
+  // categorylinks carries no title and no cat_id. Its cl_target_id is a
+  // linktarget.lt_id — an id space of its own that collides with neither
+  // page_id nor cat_id, so the wrong join is undetectable from the counters and
+  // simply throws away almost every row.
+  //
+  // Only namespace 14 is a category page. Every other row names an article,
+  // file, template or special page and must be ignored even when its title
+  // happens to read exactly like a category.
+  //
+  // lt_title is underscored exactly as cat_title is and page titles are not, so
+  // both sides are normalised before they meet.
+  //
+  // Every ns-14 lt_id is kept, whether or not its category survived Pass A, and
+  // DROPPED marks the ones that did not. That distinction is the whole point:
+  // "the target named a category we threw away" and "the target named nothing
+  // at all" are opposite failures, and only the second one means the join is
+  // broken. Measured on the real dumps, 70.6% of categorylinks rows name a
+  // meta-filtered category — maintenance categories are the most heavily
+  // linked ones on Wikipedia — so collapsing the two would trip the guard on
+  // every correct run.
+  const ltIdToName = new Map();
+  let guardedTargets = false;
+
+  await streamInsertRows(paths.linktarget, (table, v) => {
+    if (table !== 'linktarget') return;
+    if (!guardedTargets) { guardWidth('linktarget', v, targetCols.length); guardedTargets = true; }
+    if (v[LT_NS] !== CATEGORY_NAMESPACE) return;
+    const id = idByName.get(normalizeCategoryName(v[LT_TITLE]));
+    ltIdToName.set(Number(v[LT_ID]), id === undefined ? DROPPED : id);
+  });
+  if (ltIdToName.size === 0) {
+    throw new Error(
+      'linktarget produced zero ns-14 targets. The linktarget dump must come from the '
+      + 'SAME snapshot date as categorylinks; across snapshots lt_id values do not '
+      + 'join and almost every categorylinks row is discarded.',
+    );
+  }
 
   // --- Pass B: the page table, for the other half of a category edge. ---
   //
@@ -133,15 +206,19 @@ export async function ingest() {
   const idByPageId = new Map();
   let guarded = false;
 
-  await streamInsertRows(PATHS.page, (table, v) => {
-    if (table !== 'page' || v[PAGE_NS] !== CATEGORY_NAMESPACE) return;
+  await streamInsertRows(paths.page, (table, v) => {
+    if (table !== 'page') return;
+    // The width guard runs on the first row of any namespace. Sitting it behind
+    // the namespace filter would mean a shifted dump stayed unnoticed whenever
+    // the categories it lost happened to be the only affected rows.
     if (!guarded) { guardWidth('page', v, pageCols.length); guarded = true; }
+    if (v[PAGE_NS] !== CATEGORY_NAMESPACE) return;
     const id = idByName.get(normalizeCategoryName(v[PAGE_TITLE]));
     if (id === undefined) return;
     idByPageId.set(Number(v[PAGE_ID]), id);
   });
 
-  // --- Pass C: categorylinks, which names its target only by cat_id. ---
+  // --- Pass C: categorylinks, which names its target only by lt_id. ---
   //
   // `member.article` is the cl_from page id as a string: article identity is
   // only ever used to count co-membership between categories, never displayed,
@@ -156,12 +233,21 @@ export async function ingest() {
   const memberBatch = [];
   const parentBatch = [];
   let guardedLinks = false;
+  let linkRows = 0;
+  let resolvedTargets = 0;
+  let keptTargets = 0;
 
-  await streamInsertRows(PATHS.categorylinks, (table, v) => {
+  await streamInsertRows(paths.categorylinks, (table, v) => {
     if (table !== 'categorylinks') return;
     if (!guardedLinks) { guardWidth('categorylinks', v, linkCols.length); guardedLinks = true; }
-    const target = idByCatId.get(Number(v[CL_TARGET]));
+    linkRows++;
+    const target = ltIdToName.get(Number(v[CL_TARGET]));
+    // Absent from the map: no ns-14 linktarget row carries this id at all.
+    // That is the broken-join signature the guard exists to catch.
     if (target === undefined) return;
+    resolvedTargets++;
+    if (target === DROPPED) return;
+    keptTargets++;
     const type = v[CL_TYPE];
     // 'subcat' is this dump's spelling of a category-page link; older dumps
     // write 'category'. Everything else files an article under a category.
@@ -185,7 +271,41 @@ export async function ingest() {
   INGEST_STATS.keptMembers = db.prepare('SELECT COUNT(*) AS n FROM member').get().n;
 
   finalizeIndexes(db);
+
+  // --- Fail loudly on catastrophic row loss ---------------------------------
+  //
+  // Resolving cl_target_id against cat_id instead of lt_id keeps every counter
+  // looking plausible while discarding 99% of the rows, four hours in. The
+  // number is logged whether or not it is acceptable, because a run that lands
+  // just above the floor is the one worth looking at.
+  //
+  // The guard measures the join alone. Categories dropped by the meta filter
+  // are reported separately rather than folded in: on the real dumps they are
+  // 29% of all rows, so counting them as join failures would abort every
+  // correct run and teach the operator to ignore the guard.
+  const rate = linkRows > 0 ? resolvedTargets / linkRows : 0;
+  INGEST_STATS.linkRows = linkRows;
+  INGEST_STATS.resolvedTargets = resolvedTargets;
+  INGEST_STATS.keptTargets = keptTargets;
+  INGEST_STATS.targetResolution = rate;
+  console.log(`cl_target_id -> lt_title resolution: ${resolvedTargets}/${linkRows} (${(rate * 100).toFixed(2)}%)`);
+  if (linkRows > 0) {
+    console.log(`meta filter kept ${keptTargets}/${linkRows} targets (${(100 * keptTargets / linkRows).toFixed(2)}% of links)`);
+  }
+
   db.close();
+
+  if (rate < MIN_TARGET_RESOLUTION) {
+    throw new Error(
+      `Only ${(rate * 100).toFixed(2)}% of categorylinks rows resolved to a category `
+      + `(< ${(MIN_TARGET_RESOLUTION * 100).toFixed(0)}% required). The four dumps must `
+      + 'come from ONE dated directory, e.g. https://dumps.wikimedia.org/enwiki/20260801/. '
+      + 'A linktarget dump from a different snapshot date than categorylinks is the usual cause.',
+    );
+  }
+  if (INGEST_STATS.keptMembers === 0) {
+    throw new Error('ingest produced zero member rows');
+  }
   return INGEST_STATS;
 }
 
