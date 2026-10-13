@@ -1216,17 +1216,29 @@ export async function ingest() {
   // A dump set from mismatched dates resolves cl_target_id against cat_id for
   // only ~0.6% of rows while every counter still looks plausible. That must
   // never pass silently: it costs hours and produces a graph that looks valid.
+// The guard measures the JOIN ALONE. Categories dropped by the meta filter
+  // are reported separately, not folded in: on the real dumps they are ~29% of
+  // all rows, so counting them as join failures would abort every correct run
+  // and teach the operator to ignore the guard. Measured on real data:
+  // join = 100.00%, meta-filter survival = 70.64%.
   INGEST_STATS.linkRows = linkRows;
   INGEST_STATS.resolvedTargets = resolvedTargets;
+  INGEST_STATS.keptTargets = keptTargets;
   const rate = linkRows > 0 ? resolvedTargets / linkRows : 0;
   INGEST_STATS.targetResolution = rate;
-  console.log(`cl_target_id -> cat_id resolution: ${resolvedTargets}/${linkRows} (${(rate*100).toFixed(2)}%)`);
+  console.log(`cl_target_id -> lt_title resolution: ${resolvedTargets}/${linkRows} (${(rate*100).toFixed(2)}%)`);
+  if (linkRows > 0) {
+    console.log(`meta filter kept ${keptTargets}/${linkRows} targets (${(100 * keptTargets / linkRows).toFixed(2)}% of links)`);
+  }
+
+  db.close();
+
   if (rate < MIN_TARGET_RESOLUTION) {
     throw new Error(
       `Only ${(rate*100).toFixed(2)}% of categorylinks rows resolved to a category ` +
-      `(< ${(MIN_TARGET_RESOLUTION*100).toFixed(0)}% required). The dumps are almost ` +
-      `certainly from different snapshot dates. Download page, category and ` +
-      `categorylinks from ONE dated directory, e.g. ` +
+      `(< ${(MIN_TARGET_RESOLUTION*100).toFixed(0)}% required). A linktarget dump from a ` +
+      `different snapshot date than categorylinks is the usual cause. Download all four ` +
+      `dumps (page, linktarget, categorylinks, category) from ONE dated directory, e.g. ` +
       `https://dumps.wikimedia.org/enwiki/20260801/.`,
     );
   }
@@ -1234,7 +1246,6 @@ export async function ingest() {
     throw new Error('ingest produced zero member rows');
   }
 
-  db.close();
   return INGEST_STATS;
 }
 
