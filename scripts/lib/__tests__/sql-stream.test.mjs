@@ -29,8 +29,10 @@ describe('streamInsertRows', () => {
   it('parses every row across all tables', async () => {
     const seen = [];
     await streamInsertRows(FIXTURE, (t, v) => seen.push([t, v.length]));
-    expect(seen.filter(s => s[0] === 'page')).toHaveLength(7);
-    expect(seen.filter(s => s[0] === 'categorylinks')).toHaveLength(8);
+    expect(seen.filter(s => s[0] === 'page')).toHaveLength(9);
+    expect(seen.filter(s => s[0] === 'category')).toHaveLength(4);
+    expect(seen.filter(s => s[0] === 'linktarget')).toHaveLength(7);
+    expect(seen.filter(s => s[0] === 'categorylinks')).toHaveLength(14);
   });
 
   it('handles multi-row INSERT statements without dropping rows', async () => {
@@ -39,6 +41,7 @@ describe('streamInsertRows', () => {
     expect(rows).toEqual([
       'Physics', 'Entropy', 'Physical sciences', 'Thermodynamics',
       'Information theory', 'CS1 references', 'CS1 references categories',
+      'Quantum mechanics', 'Black hole',
     ]);
   });
 
@@ -55,36 +58,85 @@ describe('streamInsertRows', () => {
     const rows = [];
     await streamInsertRows(FIXTURE, (t, v) => { if (t === 'categorylinks') rows.push(v); });
     // cl_from, cl_type, cl_target_id. The category title is not in this table,
-    // and cl_target_id is a cat_id, not the page_id of the category page.
+    // and cl_target_id is a linktarget.lt_id, not the page_id or the cat_id of
+    // the category.
     expect(rows[0]).toEqual([
-      '3', 'PHYSICALSCIENCES', '2026-07-07 10:01:29', '', 'subcat', '1', '70122884',
+      '3', 'PHYSICALSCIENCES', '2026-07-07 10:01:29', '', 'subcat', '1', '20184598',
     ]);
   });
 
-  it('keeps cat_id and page_id in separate id spaces', async () => {
-    // Guards the failure that costs the most: joining categorylinks.cl_target_id
-    // to page.page_id because the two look like interchangeable ids.
-    const cats = new Map();
+  it('exposes linktarget by namespace and title', async () => {
+    const rows = [];
+    await streamInsertRows(FIXTURE, (t, v) => { if (t === 'linktarget') rows.push(v); });
+    expect(rows[0]).toEqual(['60335879', '-2', 'Example.jpg']);
+    expect(rows.map(r => r[1])).toContain('14');
+  });
+
+  it('resolves every category target through cl_target_id -> lt_id -> lt_title', async () => {
+    // The failure this guards against is silent and total: categorylinks has no
+    // title column, and the only way to name a target is to join through
+    // linktarget. Resolving cl_target_id against cat_id or page_id instead
+    // discards almost every row while every counter still looks plausible.
+    const targets = new Map();
     await streamInsertRows(FIXTURE, (t, v) => {
-      if (t === 'category') cats.set(Number(v[0]), v[1]);
+      if (t === 'linktarget') targets.set(Number(v[0]), v[2]);
     });
-    const pageTitles = new Set();
+    const catTitles = new Set();
     await streamInsertRows(FIXTURE, (t, v) => {
-      if (t === 'page' && v[1] === '14') pageTitles.add(v[2]);
+      if (t === 'category') catTitles.add(normalizeCategoryName(v[1]));
+    });
+
+    const names = [];
+    await streamInsertRows(FIXTURE, (t, v) => {
+      if (t !== 'categorylinks') return;
+      names.push(targets.get(Number(v[6])));
+    });
+
+    // Every cl_target_id in the fixture is a real lt_id, so all 14 rows name a
+    // category. lt_title carries underscores and meets cat_title only after
+    // normalisation, which is why ingest normalises both sides.
+    expect(names).toHaveLength(14);
+    expect(names.every(n => catTitles.has(normalizeCategoryName(n)))).toBe(true);
+    const tally = n => names.filter(x => normalizeCategoryName(x) === n).length;
+    expect(tally('Physical sciences')).toBe(6);
+    expect(tally('Thermodynamics')).toBe(4);
+    expect(tally('Information theory')).toBe(3);
+    expect(tally('CS1 references categories')).toBe(1);
+  });
+
+  it('keeps lt_id, cat_id and page_id in separate id spaces', async () => {
+    // Guards the failure that costs the most: joining categorylinks.cl_target_id
+    // to page.page_id or category.cat_id because the three look like
+    // interchangeable ids.
+    const ltIds = new Set();
+    const catIds = new Set();
+    const pageIds = new Set();
+    await streamInsertRows(FIXTURE, (t, v) => {
+      if (t === 'linktarget') ltIds.add(Number(v[0]));
+      if (t === 'category') catIds.add(Number(v[0]));
+      if (t === 'page') pageIds.add(Number(v[0]));
     });
 
     let checked = 0;
     await streamInsertRows(FIXTURE, (t, v) => {
-      if (t !== 'categorylinks' || v[4] !== 'subcat') return;
-      const title = cats.get(Number(v[6]));
-      expect(title).toBeDefined();
-      // cat_title carries underscores, page titles do not; the two only meet
-      // after normalisation, and ingest must do it on both sides.
-      expect(title).toBe('Physical_sciences');
-      expect(pageTitles).toContain(normalizeCategoryName(title));
+      if (t !== 'categorylinks') return;
+      const id = Number(v[6]);
+      expect(ltIds.has(id)).toBe(true);
+      expect(catIds.has(id)).toBe(false);
+      expect(pageIds.has(id)).toBe(false);
       checked++;
     });
-    expect(checked).toBe(3);
+    expect(checked).toBe(14);
+  });
+
+  it('carries a decoy linktarget row outside namespace 14 that shares a category title', async () => {
+    // lt_id 20184602 is namespace 0 with the title 'Physical_sciences'. If the
+    // namespace filter were dropped it would forge a second mapping onto a real
+    // category; the fixture must keep the filter load-bearing.
+    const rows = [];
+    await streamInsertRows(FIXTURE, (t, v) => { if (t === 'linktarget') rows.push(v); });
+    const decoy = rows.find(r => r[0] === '20184602');
+    expect(decoy).toEqual(['20184602', '0', 'Physical_sciences']);
   });
 
   it('handles commas and escaped quotes inside string values', async () => {
@@ -201,6 +253,11 @@ describe('readDumpSchema', () => {
     expect(schema.get('category')).toEqual([
       'cat_id', 'cat_title', 'cat_pages', 'cat_subcats', 'cat_files',
     ]);
+  });
+
+  it('reads linktarget, the table categorylinks.cl_target_id points at', async () => {
+    const schema = await readDumpSchema(FIXTURE);
+    expect(schema.get('linktarget')).toEqual(['lt_id', 'lt_namespace', 'lt_title']);
   });
 
   it('reports nothing for a dump with no CREATE TABLE', async () => {
