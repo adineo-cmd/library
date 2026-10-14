@@ -61,7 +61,18 @@ function column(schema, table, column) {
   return index;
 }
 
-/** Refuse to ingest rows shaped differently from the declared schema. */
+/**
+ * Refuse to ingest rows shaped differently from the declared schema.
+ *
+ * This runs on EVERY row, not just the first. A row that is one field short
+ * parses without error and shifts every column after the gap, so a malformed
+ * row in the middle of a table used to land as a wrong-but-plausible value —
+ * a truncated `cl_target_id` became NaN and showed up only as a resolution
+ * dip, but a shifted `lt_title` becomes a valid wrong category name and
+ * writes a wrong graph behind entirely healthy counters. No floor added later
+ * in this file can catch that. One integer comparison per row is not worth
+ * trading against a multi-hour run.
+ */
 function guardWidth(table, row, columns) {
   if (row.length !== columns) {
     throw new Error(`\`${table}\` row has ${row.length} fields, schema declares ${columns}`);
@@ -129,7 +140,6 @@ export async function ingest(overrides = {}) {
   // remaps every foreign key, so nothing depends on these exact numbers.
   const idByName = new Map();
   let rawCategories = 0;
-  let guardedCats = false;
 
   const insertCats = db.transaction((batch) => {
     for (const [name, pages, subcats] of batch) {
@@ -143,7 +153,7 @@ export async function ingest(overrides = {}) {
   let catBatch = [];
   await streamInsertRows(paths.category, (table, v) => {
     if (table !== 'category') return;
-    if (!guardedCats) { guardWidth('category', v, catCols.length); guardedCats = true; }
+    guardWidth('category', v, catCols.length);
     rawCategories++;
     const name = normalizeCategoryName(v[CAT_TITLE]);
     if (!name || isMaintenanceCategory(name)) return;
@@ -180,11 +190,10 @@ export async function ingest(overrides = {}) {
   // linked ones on Wikipedia — so collapsing the two would trip the guard on
   // every correct run.
   const ltIdToName = new Map();
-  let guardedTargets = false;
 
   await streamInsertRows(paths.linktarget, (table, v) => {
     if (table !== 'linktarget') return;
-    if (!guardedTargets) { guardWidth('linktarget', v, targetCols.length); guardedTargets = true; }
+    guardWidth('linktarget', v, targetCols.length);
     if (v[LT_NS] !== CATEGORY_NAMESPACE) return;
     const id = idByName.get(normalizeCategoryName(v[LT_TITLE]));
     ltIdToName.set(Number(v[LT_ID]), id === undefined ? DROPPED : id);
@@ -204,14 +213,13 @@ export async function ingest(overrides = {}) {
   // table's names because the two dumps disagree on underscores: page titles
   // carry none, cat_title carries them.
   const idByPageId = new Map();
-  let guarded = false;
 
   await streamInsertRows(paths.page, (table, v) => {
     if (table !== 'page') return;
-    // The width guard runs on the first row of any namespace. Sitting it behind
-    // the namespace filter would mean a shifted dump stayed unnoticed whenever
-    // the categories it lost happened to be the only affected rows.
-    if (!guarded) { guardWidth('page', v, pageCols.length); guarded = true; }
+    // Ahead of the namespace filter, and on every row: sitting it behind either
+    // would mean a shifted dump stayed unnoticed whenever the rows it affected
+    // happened to be ones this pass filters out anyway.
+    guardWidth('page', v, pageCols.length);
     if (v[PAGE_NS] !== CATEGORY_NAMESPACE) return;
     const id = idByName.get(normalizeCategoryName(v[PAGE_TITLE]));
     if (id === undefined) return;
@@ -240,7 +248,6 @@ export async function ingest(overrides = {}) {
 
   const memberBatch = [];
   const parentBatch = [];
-  let guardedLinks = false;
   let linkRows = 0;
   let resolvedTargets = 0;
   let keptTargets = 0;
@@ -248,7 +255,7 @@ export async function ingest(overrides = {}) {
 
   await streamInsertRows(paths.categorylinks, (table, v) => {
     if (table !== 'categorylinks') return;
-    if (!guardedLinks) { guardWidth('categorylinks', v, linkCols.length); guardedLinks = true; }
+    guardWidth('categorylinks', v, linkCols.length);
     linkRows++;
     const target = ltIdToName.get(Number(v[CL_TARGET]));
     // Absent from the map: no ns-14 linktarget row carries this id at all.

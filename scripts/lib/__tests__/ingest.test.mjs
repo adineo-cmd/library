@@ -383,6 +383,77 @@ describe('ingest guards', () => {
     };
     await expect(ingest(paths)).rejects.toThrow(/`page` row has 3 fields, schema declares 4/);
   });
+
+  it('rejects a malformed row in the MIDDLE of a table, not just the first', async () => {
+    // The guard used to run once per table, behind a `guarded` flag. A truncated
+    // row anywhere else parsed without error and shifted every column after the
+    // gap. The dangerous case is not a throw: lt_title and cl_target_id both
+    // still hold *valid* values after a shift, so the row resolves, every
+    // counter stays healthy, and the run writes a wrong graph. No floor added
+    // downstream can catch that. This row is the 8th of 14.
+    const malformed = fixturePaths({
+      categorylinks: gz(withRows('categorylinks', [
+        "(2,'ENTROPY','2026-07-07 10:01:29','','page',1,20184599)",
+        "(2,'ENTROPY','2026-07-07 10:01:29','','page',1,20184600)",
+        "(2,'ENTROPY','2026-07-07 10:01:29','','page',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184599)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184600)",
+        "(8,'QUANTUMMECHANICS','2026-07-07 10:01:29','','page',1,20184598)",
+        // One field short: cl_sortkey_prefix is missing, so every column after
+        // it lands one position to the left.
+        "(8,'QUANTUMMECHANICS','2026-07-07 10:01:29','page',1,20184599)",
+      ])),
+    });
+    await expect(ingest(malformed)).rejects.toThrow(
+      /`categorylinks` row has 6 fields, schema declares 7/,
+    );
+  });
+
+  it('rejects a malformed row that the old first-row-only guard dropped silently', async () => {
+    // The concrete failure the per-row guard exists to prevent, measured under
+    // the OLD behaviour: this run SUCCEEDED with 92.31% resolution, 6 parent
+    // edges and 6 members — every counter healthy, no floor tripped, no
+    // operator-facing signal of any kind — while the truncated row vanished.
+    // One lost row is harmless; the same shift on a real dump silently drops
+    // whichever rows land malformed, and shifts their surviving columns into
+    // whatever sits next.
+    const rows = [];
+    for (let i = 0; i < 6; i++) rows.push("(1,'A','','','page',1,20184598)");
+    // One field short. cl_type still reads 'page' from the shifted field and
+    // cl_target_id is absent, so the row resolves to nothing and is discarded
+    // without complaint.
+    rows.push("(1,'A','','','page',1)");
+    for (let i = 0; i < 6; i++) rows.push("(4,'A','','','subcat',1,20184598)");
+    const paths = fixturePaths({
+      categorylinks: gz(withRows('categorylinks', rows)),
+    });
+    await expect(ingest(paths)).rejects.toThrow(
+      /`categorylinks` row has 6 fields, schema declares 7/,
+    );
+  });
+
+  it('rejects a malformed row in the middle of the page table', async () => {
+    // The other three passes had the same flag. `page` is the one where a
+    // silent shift is hardest to notice: it feeds idByPageId, so a truncated
+    // row quietly drops a category page and the parent edge it would have
+    // produced, with no counter recording the loss. The first two rows are
+    // well formed, so a first-row-only guard would never see this one.
+    const good = gz(FIXTURE_SQL);
+    const withBad = FIXTURE_SQL.replace(
+      /INSERT INTO `page` VALUES[\s\S]*?;/,
+      "INSERT INTO `page` VALUES\n"
+      + "(1,0,'Physics',0,0,0.856935107283,'20260731120255',NULL,1367012995,111,'wikitext',NULL),\n"
+      + "(2,0,'Entropy',0,0,0.870480291199,'20260805045949',NULL,1367786022,113994,'wikitext',NULL),\n"
+      // page_is_new (the 5th field) is missing: 11 fields against a schema of 12.
+      + "(3,14,'Physical sciences',0,0.13895768761,'20260718034000',NULL,783865149,90,'wikitext',NULL),",
+    );
+    const paths = {
+      page: gz(withBad), category: good, linktarget: good, categorylinks: good,
+      db: scratch(),
+    };
+    await expect(ingest(paths)).rejects.toThrow(/`page` row has 11 fields, schema declares 12/);
+  });
 });
 
 describe('missingInputs', () => {
@@ -394,7 +465,16 @@ describe('missingInputs', () => {
     // Each is 2.5 GB; one accidental `git add .` must not stage one. The
     // patterns are read from .gitignore rather than restated as constants, so
     // deleting the rule fails this test instead of failing quietly on main.
-    const ignoreFile = readFileSync(new URL('../../../../.gitignore', import.meta.url), 'utf8');
+    //
+    // memex/.gitignore, three levels up from scripts/lib/__tests__/. Four levels up
+    // is the PARENT repo, which has its own copy of the rule — reading that made
+    // this test pass even with both rules deleted from here, which is the exact
+    // failure it exists to prevent. The assertion below pins the repo root to the
+    // one that actually holds scripts/ingest.mjs, so that cannot regress.
+    const repoRoot = new URL('../../../', import.meta.url);
+    expect(existsSync(new URL('scripts/ingest.mjs', repoRoot))).toBe(true);
+
+    const ignoreFile = readFileSync(new URL('.gitignore', repoRoot), 'utf8');
     const patterns = ignoreFile.split('\n')
       .map(l => l.trim())
       .filter(l => l && !l.startsWith('#'))
