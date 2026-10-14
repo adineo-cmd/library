@@ -64,39 +64,185 @@ describe('isMaintenanceCategory — the three ruled meta-filter families', () =>
   it.each(kept)('keeps %s', name => expect(isMaintenanceCategory(name)).toBe(false));
 });
 
+/**
+ * Ruling 3. Every title below is a real `cat_title` read out of
+ * `enwiki-latest-category.sql.gz`, so the fixtures cannot drift from the dump.
+ * These are the families that owned the top of the 30,000-node cut.
+ */
+describe('isMaintenanceCategory — the top-of-cut families', () => {
+  const dropped = [
+    // Service sync. `Short description is different from Wikidata` was node #1
+    // of the whole cut at 4,673,004 pages; `Coordinates on Wikidata` was #7.
+    'Short description is different from Wikidata', 'Short description matches Wikidata',
+    'Short description with empty Wikidata description', 'Coordinates on Wikidata',
+    'Official website not in Wikidata',
+    // Redirect / index bookkeeping.
+    'Unprintworthy redirects', 'Printworthy redirects', 'Avoided double redirects',
+    'Middle-earth redirects', 'Noindexed pages',
+    // Tool-usage and template-parameter reports.
+    'Pages using gadget WikiMiniAtlas', 'Pages using the Kartographer extension',
+    'Pages using infobox settlement with no coordinates',
+    'Articles using NRISref without a reference number',
+    'Single chart called without song', 'Album chart usages for Billboard200',
+    'Automatic category TOC generates no TOC',
+    'Film articles needing an image', 'Biography articles needing infoboxes',
+    'Military history articles needing attention to referencing and citation',
+    'Television episode articles with short description for single episodes',
+    'Interlanguage link template existing link', 'Taxonbars desynced from Wikidata',
+    'Set categories', 'Pages including recorded pronunciations',
+    'Pages translated from German Wikipedia', 'Wayback template wayback links',
+    'Category series navigation using skip-gaps parameter', 'Container categories',
+    'Tracking categories', 'Infobox road maps tracking category',
+    // WikiProject assessment.
+    'Category-Class Years pages', 'List-Class List articles', 'NA-importance Years pages',
+    'Mid-importance football articles', 'Low-importance Lepidoptera articles',
+    'Sports and games work group articles', 'European military history task force articles',
+    'Military history articles by task force', 'Harry Potter task force participants',
+    'Good articles', 'Featured articles',
+    // The living-people bot family. Dropped on a product decision, not a
+    // heuristic: a human partner ruled these are template bookkeeping.
+    'Biography articles of living people', 'Living people',
+    'Year of birth missing (living people)', 'Place of birth missing (living people)',
+    // User-space administration.
+    'User talk pages with Uw-spam1 notices', 'User en-N', 'Male Wikipedians',
+    'Paid contributors', 'Users tagged as sockpuppets with no second parameter',
+    'Local COIBot Reports', 'Shared IP addresses from educational institutions',
+    'Ended featured picture nominations', 'Userboxes with insufficient color contrast',
+    // Article-creation queues and dated cleanup buckets.
+    'Accepted AfC submissions', 'Declined AfC submissions',
+    'Taxonomy articles created by Polbot', 'Use American English from July 2025',
+    'Articles of WikiProject Protected areas',
+    // Media licensing.
+    'Non-free rationale as na', 'Creative Commons Attribution-ShareAlike 3.0 files',
+    'GFDL files', 'Album covers', 'Files with no machine-readable description',
+    'Navboxes using background colours', 'Automatically assessed biography articles',
+    'Pages within the scope of WikiProject Astronomical objects (WP Astronomy Banner)',
+  ];
+
+  /**
+   * The over-reach guard, and the reason this round exists. Each of these is a
+   * real `cat_title` that a plausible-looking but wrong pattern would have
+   * deleted — `First-class cricket` is the `-Class` family meeting a subject,
+   * `Use of force` and `Chemical compounds and Wikidata` are the two shapes
+   * that made the naive `^Use ` and bare `Wikidata` rules wrong.
+   */
+  const kept = [
+    'Physics', 'History', 'Geography', 'Mathematics', 'Thermodynamics',
+    'Films of 1999', 'Mercury (planet)', 'Association football', 'Music theory',
+    'Men’s association football midfielders', 'Surnames', 'Given names',
+    'Named minor planets', 'IUCN Red List least concern species',
+    'Active politicians', 'Albums by artist', '1988 births', 'Latin music',
+    // Shape collisions, all real dump titles.
+    'First-class cricket teams in India', 'First-class cricket competitions',
+    'Cat-Class articles', 'Use of force', 'Use of electoral systems',
+    'Chemical compounds and Wikidata', 'Male actors in Hindi cinema',
+    'Creative Commons-licensed novels', 'English-language films',
+    'Media and communications in Barnet', 'File hosting', 'E-Class (Mercedes-Benz)',
+    'Taxonomy', 'Awards', 'Royalty and nobility', 'Pop music',
+  ];
+
+  it.each(dropped)('drops %s', name => expect(isMaintenanceCategory(name)).toBe(true));
+  it.each(kept)('keeps %s', name => expect(isMaintenanceCategory(name)).toBe(false));
+});
+
 describe('MAINTENANCE_PATTERNS', () => {
   /**
-   * One real dump title per pattern, covering all of them. Every entry was read
-   * out of `enwiki-latest-category.sql.gz` while measuring the table, so this
-   * list is evidence rather than invention — and the assertion below turns it
-   * into a gate.
+   * One real `cat_title` per pattern, in the same order as
+   * `MAINTENANCE_PATTERNS`, read out of `enwiki-latest-category.sql.gz`. Every
+   * entry is a title that its own pattern matches **and that no earlier
+   * pattern in the list matches** — so each pattern demonstrably contributes
+   * coverage the list did not already have.
    *
-   * The gate exists because a pattern that matches no real row is invisible to a
-   * unit test and dead in production, yet `/method` renders the whole list
-   * verbatim as if every entry were doing work. An earlier revision shipped
-   * `^[A-Z]-importance `, which matches 0 of 2.6M rows: the real titles are
-   * `NA-importance`, `Low-importance` and so on. Adding a pattern without adding
-   * its exemplar now fails here.
+   * The exclusivity is the whole point. A plain "does any fixture match this
+   * pattern" check passes for a pattern that matches nothing of its own
+   * because some other pattern happens to match the fixture, which is how
+   * `^[A-Z]-importance ` shipped dead once and how a second dead rule
+   * (`^Wayback template `, 0 rows — the real title is `Wayback template
+   * wayback links`) survived a review round. Requiring an earlier-unclaimed
+   * title closes that hole: a redundant or empty pattern has nowhere to point.
+   *
+   * Adding a pattern without adding its exemplar fails on length; adding an
+   * exemplar that some earlier pattern already claims fails on exclusivity.
    */
-  const REAL_EXEMPLARS = [
-    'CS1 errors: ISSN',
-    'WikiProject Canadian communities articles',
-    'Wikipedia articles needing clarification',
-    'Template documentation',
-    'Use dmy dates',
-    'Articles with unsourced statements',
-    'Stub-Class biography (politics and government) articles',
+  const EXCLUSIVE_EXEMPLARS = [
+    'CS1 maint: deprecated archival service',
+    'WikiProject Biography articles',
+    'Wikipedia non-free files with NFUR stated',
+    'Template film date with 1 release date',
+    'Use dmy dates from April 2022',
+    'Articles with short description',
+    'Stub-Class biography articles',
     'Undated AfC submissions',
-    'Interwiki category linking templates',
-    'Commons category Wikidata tracking categories',
-    'All articles with unsourced statements',
-    'Disambiguation pages in need of cleanup',
-    '1978',
-    '1920s',
-    '18th century',
-    'Redirects from merges',
+    'Interwiki bots',
+    'Commons category link is on Wikidata',
+    'All stub articles',
+    'Redirects to disambiguation pages',
+    '2016',
+    '2020s',
+    '20th century',
+    'Redirects from moves',
     'Start-Class biography articles',
-    'Wikipedians who listen to world music',
+    'Wikipedians who have received a Teahouse invitation through AfC',
+    // Ruling 3 — the families that owned the top of the 30,000-node cut.
+    'Short description is different from Wikidata',
+    'Official website not in Wikidata',
+    'Coordinates on Wikidata',
+    'Official website different in Wikidata and Wikipedia',
+    'Wikidata tracking categories',
+    'Unprintworthy redirects',
+    'Noindexed pages',
+    'Pages using gadget WikiMiniAtlas',
+    'Infobox road maps tracking category',
+    'Single chart called without song',
+    'Automatic category TOC generates no TOC',
+    'Film articles needing an image',
+    'Military history articles needing attention to referencing and citation',
+    'Television episode articles with short description for single episodes',
+    'Interlanguage link template existing link',
+    'Taxonbars with multiple manual Wikidata items',
+    'Set categories',
+    'Source attribution',
+    'Pages including recorded pronunciations',
+    'Pages translated from German Wikipedia',
+    'Wayback template wayback links',
+    'Category series navigation using skip-gaps parameter',
+    'Container categories',
+    'Tracking categories',
+    'Userboxes with insufficient color contrast',
+    'Articles incorporating Cite DNB template',
+    'Articles without KEGG source',
+    'Navboxes using background colours',
+    'Automatically assessed biography articles',
+    'Pages within the scope of WikiProject Astronomical objects (WP Astronomy Banner)',
+    'Album articles lacking alt text for covers',
+    'Category-Class Years pages',
+    'Unknown-importance List articles',
+    'NA-importance Years pages',
+    'Sports and games work group articles',
+    'European military history task force articles',
+    'Animation articles by work groups',
+    'Harry Potter task force participants',
+    'Articles of WikiProject Protected areas',
+    'Biography articles of living people',
+    'Year of birth unknown',
+    'User talk pages with Uw-spam1 notices',
+    'User en-N',
+    'Male Wikipedians',
+    'Paid contributors',
+    'Users tagged as sockpuppets with no second parameter',
+    'Suspected Wikipedia sockpuppets',
+    'Local COIBot Reports',
+    'Shared IP addresses from educational institutions',
+    'Ended featured picture nominations',
+    'Use American English from July 2025',
+    'AfC submissions on living persons',
+    'Accepted AfC submissions',
+    'Taxonomy articles created by Polbot',
+    'Non-free rationale as na',
+    'Creative Commons Attribution-ShareAlike 3.0 files',
+    'GFDL files',
+    'Album covers',
+    'Completed non-free use rationale logo transclusions',
   ];
 
   it('is the auditable list reported on /method', () => {
@@ -106,17 +252,37 @@ describe('MAINTENANCE_PATTERNS', () => {
     }
   });
 
-  it('has no dead pattern: every one is exercised by a real dump title', () => {
+  it('has one real dump exemplar per pattern', () => {
+    expect(EXCLUSIVE_EXEMPLARS).toHaveLength(MAINTENANCE_PATTERNS.length);
+  });
+
+  it('has no dead pattern: each one is exercised by a real dump title', () => {
     const orphans = MAINTENANCE_PATTERNS.filter(
-      source => !REAL_EXEMPLARS.some(title => new RegExp(source, 'i').test(title)));
+      (source, i) => !new RegExp(source, 'i').test(EXCLUSIVE_EXEMPLARS[i]));
     expect(orphans).toEqual([]);
   });
 
-  it('keeps a fixture only for patterns that exist', () => {
-    // The reverse direction: a stale exemplar is a test asserting nothing.
-    const stale = REAL_EXEMPLARS.filter(
-      title => !MAINTENANCE_PATTERNS.some(source => new RegExp(source, 'i').test(title)));
-    expect(stale).toEqual([]);
+  it('has no redundant pattern: each adds coverage an earlier pattern lacks', () => {
+    // The reverse direction, and the one that catches a rule whose work is
+    // already being done further up the list — including one that matches no
+    // row at all and only looks alive because a neighbour matches the fixture.
+    const redundant = [];
+    MAINTENANCE_PATTERNS.forEach((source, i) => {
+      const re = new RegExp(source, 'i');
+      const claimedEarlier = MAINTENANCE_PATTERNS
+        .slice(0, i)
+        .some(p => new RegExp(p, 'i').test(EXCLUSIVE_EXEMPLARS[i]));
+      if (!re.test(EXCLUSIVE_EXEMPLARS[i]) || claimedEarlier) redundant.push(source);
+    });
+    expect(redundant).toEqual([]);
+  });
+
+  it('drops what each exemplar names', () => {
+    // The gate above proves the pattern is alive; this proves it does the
+    // dropping, so an over-narrow pattern cannot pass on a borrowed fixture.
+    for (const title of EXCLUSIVE_EXEMPLARS) {
+      expect(isMaintenanceCategory(title)).toBe(true);
+    }
   });
 
   it('does not swallow disambiguated names on the trailing parenthesis', () => {
