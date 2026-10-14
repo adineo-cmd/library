@@ -127,15 +127,25 @@ describe('ingest', () => {
     // categories would therefore abort every real run at 90% and train the
     // operator to ignore the guard. The guard measures the join; the meta
     // filter's cost is logged separately.
+    //
+    // The ratio is 70/30 to match the measured 29.26% survival. It is chosen so
+    // this test actually pins its own claim: at a 91/9 split the wrong
+    // denominator (keptTargets/linkRows = 0.91) would still clear the 0.9 floor
+    // and the guard could be broken without this test noticing. At 0.70 the
+    // wrong denominator aborts the run and the test fails.
     const dropped = [];
-    for (let i = 0; i < 9; i++) dropped.push(`(1,'A','','','page',1,556)`);
+    for (let i = 0; i < 30; i++) dropped.push(`(1,'A','','','page',1,556)`);
     const kept = [];
-    for (let i = 0; i < 91; i++) kept.push(`(1,'A','','','page',1,555)`);
+    for (let i = 0; i < 69; i++) kept.push(`(1,'A','','','page',1,555)`);
+    // One subcat row, so the run also clears the keptParents floor. It files
+    // 'Applied sciences' under 'Physics' and contributes no member row, so the
+    // 69/30 member ratio this test exists to pin is untouched.
+    kept.push(`(3,'APPLIEDSCIENCES','','','subcat',1,555)`);
     const paths = {
       page: gz("CREATE TABLE `page` (`page_id` int, `page_namespace` int, `page_title` varbinary(255));\n"
-        + "INSERT INTO `page` VALUES\n(1,0,'Physics'),\n(2,14,'Physics');"),
+        + "INSERT INTO `page` VALUES\n(1,0,'Physics'),\n(2,14,'Physics'),\n(3,14,'Applied sciences');"),
       category: gz("CREATE TABLE `category` (`cat_id` int, `cat_title` varbinary(255), `cat_pages` int, `cat_subcats` int, `cat_files` int);\n"
-        + "INSERT INTO `category` VALUES\n(1,'Physics',10,0,0),\n(2,'CS1_references',99,0,0);"),
+        + "INSERT INTO `category` VALUES\n(1,'Physics',10,0,0),\n(2,'CS1_references',99,0,0),\n(3,'Applied_sciences',4,1,0);"),
       // 556 is a genuine category target whose category the meta filter drops.
       linktarget: gz("CREATE TABLE `linktarget` (`lt_id` bigint, `lt_namespace` int, `lt_title` varbinary(255));\n"
         + "INSERT INTO `linktarget` VALUES\n(555,14,'Physics'),\n(556,14,'CS1_references');"),
@@ -149,8 +159,9 @@ describe('ingest', () => {
       expect(stats.linkRows).toBe(100);
       expect(stats.resolvedTargets).toBe(100);
       expect(stats.targetResolution).toBe(1);
-      expect(stats.keptTargets).toBe(91);
-      expect(stats.keptMembers).toBe(91);
+      expect(stats.keptTargets).toBe(70);
+      expect(stats.keptMembers).toBe(69);
+      expect(stats.keptParents).toBe(1);
     } finally {
       spy.mockRestore();
     }
@@ -231,14 +242,18 @@ describe('ingest guards', () => {
   it('ignores a linktarget row outside namespace 14 even when its title matches', async () => {
     // lt_id 556 is namespace 0 with the title 'Physics'. Accepting it would
     // forge a link from a categorylinks row that names no category at all.
+    // One of the eleven resolving rows is a subcat edge so the run also clears
+    // the keptParents floor; it names 'Applied sciences', not 'Physics', so the
+    // member list below still proves the decoy produced nothing.
     const links = ["(1,'A','','','page',1,555)"];
-    for (let i = 0; i < 10; i++) links.push(`(1,'A','','','page',1,555)`);
+    for (let i = 0; i < 9; i++) links.push(`(1,'A','','','page',1,555)`);
+    links.push("(3,'APPLIEDSCIENCES','','','subcat',1,555)");
     links.push("(1,'A','','','page',1,556)");
     const paths = {
       page: gz("CREATE TABLE `page` (`page_id` int, `page_namespace` int, `page_title` varbinary(255));\n"
-        + "INSERT INTO `page` VALUES\n(1,0,'Physics'),\n(2,14,'Physics');"),
+        + "INSERT INTO `page` VALUES\n(1,0,'Physics'),\n(2,14,'Physics'),\n(3,14,'Applied sciences');"),
       category: gz("CREATE TABLE `category` (`cat_id` int, `cat_title` varbinary(255), `cat_pages` int, `cat_subcats` int, `cat_files` int);\n"
-        + "INSERT INTO `category` VALUES\n(1,'Physics',10,0,0);"),
+        + "INSERT INTO `category` VALUES\n(1,'Physics',10,0,0),\n(2,'Applied_sciences',4,1,0);"),
       linktarget: gz("CREATE TABLE `linktarget` (`lt_id` bigint, `lt_namespace` int, `lt_title` varbinary(255));\n"
         + "INSERT INTO `linktarget` VALUES\n(555,14,'Physics'),\n(556,0,'Physics');"),
       categorylinks: gz("CREATE TABLE `categorylinks` (`cl_from` int, `cl_sortkey` varbinary(230), `cl_timestamp` timestamp, `cl_sortkey_prefix` varbinary(255), `cl_type` enum('page','subcat','file'), `cl_collation_id` smallint, `cl_target_id` bigint);\n"
@@ -249,10 +264,94 @@ describe('ingest guards', () => {
     expect(stats.linkRows).toBe(12);
     expect(stats.resolvedTargets).toBe(11);
     expect(stats.keptTargets).toBe(11);
-    expect(stats.keptMembers).toBe(11);
+    expect(stats.keptMembers).toBe(10);
+    expect(stats.keptParents).toBe(1);
     expect(rows(paths.db, MEMBERS)).toEqual(
-      Array.from({ length: 11 }, () => ({ article: '1', name: 'Physics' })),
+      Array.from({ length: 10 }, () => ({ article: '1', name: 'Physics' })),
     );
+  });
+
+  it('throws when no parent row survives, even though every target resolved', async () => {
+    // The gate the member floor does not cover. Every link here resolves to a
+    // live category and cl_type is 'page', so keptMembers is 13 and the
+    // resolution rate is 100%: both existing guards pass. Only the absence of
+    // parent edges gives it away — an atlas of 13 members and no hierarchy,
+    // which is exactly what a dead cl_type branch would ship on a full run.
+    const paths = fixturePaths({
+      categorylinks: gz(withRows('categorylinks', [
+        "(2,'ENTROPY','2026-07-07 10:01:29','','page',1,20184599)",
+        "(2,'ENTROPY','2026-07-07 10:01:29','','page',1,20184600)",
+        "(2,'ENTROPY','2026-07-07 10:01:29','','page',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184599)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184600)",
+      ])),
+    });
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(ingest(paths)).rejects.toThrow(/zero parent edges from 0 subcat rows/);
+      // The run got far enough to write a healthy member table, so the rate
+      // guard and the member floor both passed first.
+      expect(INGEST_STATS.keptMembers).toBe(6);
+      expect(INGEST_STATS.keptParents).toBe(0);
+      expect(INGEST_STATS.targetResolution).toBe(1);
+      expect(INGEST_STATS.subcatRows).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('separates a dead subcat branch from subcat rows that were all dropped', async () => {
+    // Same zero parents as the previous test, but subcat rows DO exist: page 3
+    // files itself under its own category, so the one subcat row is a self edge
+    // and never reaches the parent table. subcatRows is what tells an operator
+    // which of the two they are looking at; keptParents alone says only "0".
+    const paths = fixturePaths({
+      categorylinks: gz(withRows('categorylinks', [
+        "(3,'PHYSICALSCIENCES','2026-07-07 10:01:29','','subcat',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184599)",
+      ])),
+    });
+    const logged = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation(m => logged.push(String(m)));
+    try {
+      await expect(ingest(paths)).rejects.toThrow(/zero parent edges from 1 subcat rows/);
+      expect(INGEST_STATS.subcatRows).toBe(1);
+      expect(INGEST_STATS.keptParents).toBe(0);
+      expect(INGEST_STATS.keptMembers).toBe(2);
+      expect(logged.join('\n')).toMatch(/subcat rows: 1 \(0 parent edges written\)/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('counts subcat rows ahead of the self-edge drop', async () => {
+    // The fixture's three subcat rows are two real edges and one self edge
+    // (page 3 under its own category). subcatRows counts all three; the self
+    // edge never reaches the parent table, which is what makes the counter
+    // worth having — it is read on the real dumps, where subcat is 2.02%.
+    const stats = await ingest(fixturePaths());
+    expect(stats.subcatRows).toBe(3);
+    expect(stats.keptParents).toBe(2);
+  });
+
+  it('builds the whole page->category map before the name map is released', async () => {
+    // ingest clears idByName after pass B, before pass C, to keep the pass-C
+    // peak down. idByPageId is the only thing pass C reads from pass B, and it
+    // is built entirely during the pass that still has idByName in hand: if the
+    // clear were moved a line earlier, or the pass-B lookup were changed to read
+    // a cleared map, every parent edge would silently vanish (Map.get returns
+    // undefined, and undefined is already the "not a category page" path).
+    // This asserts both halves of that contract on the same fixture.
+    const paths = fixturePaths();
+    const stats = await ingest(paths);
+    expect(stats.subcatRows).toBe(3);
+    expect(stats.keptParents).toBe(2);
+    expect(rows(paths.db, PARENTS)).toEqual([
+      { child: 'Information theory', parent: 'Physical sciences' },
+      { child: 'Thermodynamics', parent: 'Physical sciences' },
+    ]);
   });
 
   it('validates every dump schema before deleting an existing database', async () => {
@@ -288,6 +387,29 @@ describe('ingest guards', () => {
 
 describe('missingInputs', () => {
   const absent = name => join(tmpdir(), `atlas-absent-${name}.sql.gz`);
+
+  it('gitignores every dump it will ever look for', () => {
+    // ingest prefers this repo directory whenever enwiki-latest-page.sql.gz is
+    // here, so the dumps are as likely to land inside the repo as beside it.
+    // Each is 2.5 GB; one accidental `git add .` must not stage one. The
+    // patterns are read from .gitignore rather than restated as constants, so
+    // deleting the rule fails this test instead of failing quietly on main.
+    const ignoreFile = readFileSync(new URL('../../../../.gitignore', import.meta.url), 'utf8');
+    const patterns = ignoreFile.split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith('#'))
+      .map(l => (l.startsWith('/') ? l.slice(1) : l).replace(/\/$/, ''));
+    // gitignore glob, restricted to the '*' that these rules actually use.
+    const matches = (pattern, name) => new RegExp(
+      `^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')}$`,
+    ).test(name);
+
+    for (const key of ['page', 'category', 'categorylinks', 'linktarget']) {
+      const name = PATHS[key].split('/').pop();
+      expect(patterns.some(p => matches(p, name)), `${key} dump (${name}) is not gitignored`)
+        .toBe(true);
+    }
+  });
 
   it('checks all four dumps, linktarget included', () => {
     expect(Object.keys(PATHS)).toEqual(

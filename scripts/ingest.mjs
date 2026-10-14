@@ -25,7 +25,7 @@ export const PATHS = {
 
 export const INGEST_STATS = {
   rawCategories: 0, afterMetaFilter: 0, keptParents: 0, keptMembers: 0,
-  linkRows: 0, resolvedTargets: 0, keptTargets: 0, targetResolution: 0,
+  linkRows: 0, resolvedTargets: 0, keptTargets: 0, subcatRows: 0, targetResolution: 0,
 };
 
 /**
@@ -218,6 +218,14 @@ export async function ingest(overrides = {}) {
     idByPageId.set(Number(v[PAGE_ID]), id);
   });
 
+  // Last read of idByName. Every closure that captures it (insertCats in pass
+  // A, the two stream callbacks above) is reachable for the rest of this
+  // function, so the map is context-resident even though it is dead, and pass C
+  // allocates the two largest structures in the run on top of it. Clearing is
+  // what actually returns the pages to the OS; nulling the binding would not,
+  // because insertCats would still hold the map.
+  idByName.clear();
+
   // --- Pass C: categorylinks, which names its target only by lt_id. ---
   //
   // `member.article` is the cl_from page id as a string: article identity is
@@ -236,6 +244,7 @@ export async function ingest(overrides = {}) {
   let linkRows = 0;
   let resolvedTargets = 0;
   let keptTargets = 0;
+  let subcatRows = 0;
 
   await streamInsertRows(paths.categorylinks, (table, v) => {
     if (table !== 'categorylinks') return;
@@ -252,6 +261,7 @@ export async function ingest(overrides = {}) {
     // 'subcat' is this dump's spelling of a category-page link; older dumps
     // write 'category'. Everything else files an article under a category.
     if (type === 'subcat' || type === 'category') {
+      subcatRows++;
       const child = idByPageId.get(Number(v[CL_FROM]));
       // A category cannot be its own parent, and a self edge would close a
       // one-node cycle in the tree built downstream.
@@ -283,15 +293,26 @@ export async function ingest(overrides = {}) {
   // are reported separately rather than folded in: on the real dumps they are
   // 29% of all rows, so counting them as join failures would abort every
   // correct run and teach the operator to ignore the guard.
+  //
+  // Two floors, not one. The rate above only proves the join worked; it says
+  // nothing about whether either output is non-empty, and a run can clear it
+  // while writing ~150M member rows and no hierarchy whatsoever. keptMembers and
+  // keptParents are each checked for that.
   const rate = linkRows > 0 ? resolvedTargets / linkRows : 0;
   INGEST_STATS.linkRows = linkRows;
   INGEST_STATS.resolvedTargets = resolvedTargets;
   INGEST_STATS.keptTargets = keptTargets;
+  INGEST_STATS.subcatRows = subcatRows;
   INGEST_STATS.targetResolution = rate;
   console.log(`cl_target_id -> lt_title resolution: ${resolvedTargets}/${linkRows} (${(rate * 100).toFixed(2)}%)`);
   if (linkRows > 0) {
     console.log(`meta filter kept ${keptTargets}/${linkRows} targets (${(100 * keptTargets / linkRows).toFixed(2)}% of links)`);
   }
+  // Printed unconditionally: with keptParents at 0 this is the line that tells
+  // an operator whether the dump had no 'subcat' rows at all (a dead branch)
+  // or had them and something discarded every one (a real bug). The two are
+  // otherwise indistinguishable from the keptParents counter alone.
+  console.log(`subcat rows: ${subcatRows} (${INGEST_STATS.keptParents} parent edges written)`);
 
   db.close();
 
@@ -305,6 +326,18 @@ export async function ingest(overrides = {}) {
   }
   if (INGEST_STATS.keptMembers === 0) {
     throw new Error('ingest produced zero member rows');
+  }
+  // A run can resolve every target and still yield no hierarchy at all: the
+  // parent edges come from cl_type='subcat' rows only, so ~150M member rows
+  // with zero parents is a graph with no tree in it, and both counters above
+  // would look perfectly healthy.
+  if (INGEST_STATS.keptParents === 0) {
+    throw new Error(
+      `ingest produced zero parent edges from ${subcatRows} subcat rows, although `
+      + `${keptTargets} targets resolved. On the real dumps 'subcat' is 2.02% of categorylinks, `
+      + 'so a zero here means the cl_type branch is dead or the page->category join in Pass B '
+      + 'is wrong, not that Wikipedia has no category hierarchy.',
+    );
   }
   return INGEST_STATS;
 }

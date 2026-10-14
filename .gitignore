@@ -25,3 +25,9 @@ pnpm-debug.log*
 
 # ingest output
 atlas-work/
+
+# English Wikipedia SQL dumps. ingest.mjs prefers this directory whenever
+# enwiki-latest-page.sql.gz sits here, so the rule cannot live only in the
+# parent repo's .gitignore: they are 2.5 GB each and must never be committed.
+enwiki-latest-*.sql.gz
+*.sql.gz
