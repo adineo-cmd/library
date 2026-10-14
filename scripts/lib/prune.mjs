@@ -322,3 +322,103 @@ export function assignDepth(parentOf, nodeCount) {
   if (perturb) depth[0] = 12345;
   return depth;
 }
+
+/**
+ * Pass 3 — the depth cap. Every node deeper than `maxDepth` is re-parented to
+ * its ancestor at depth `maxDepth - 1`, which puts it at exactly `maxDepth`:
+ * the cap is a bound on depth, so the anchor has to be one level above it.
+ * (Spec 5.4 says "re-parented to their depth-5 ancestor"; taken literally that
+ * leaves the node at depth 6 and caps nothing. The anchor one level up is the
+ * reading that enforces the cap, and the one the tests pin.)
+ *
+ * The anchor is unique and well-defined: pass 2 has already produced a forest,
+ * so every node has exactly one path to a root and depths decrease by exactly
+ * one per step up it. The walk therefore always terminates at a real node —
+ * it passes through every integer depth from `depth[i]` down to `maxDepth - 1`
+ * and stops there, never reaching the root's -1. A node whose depth-(maxDepth-1)
+ * ancestor was "removed" cannot exist here: the cap runs before the rank cut,
+ * and the cap itself removes no nodes, only edges — `removedCount` counts the
+ * re-parented nodes, i.e. the deep edges dropped, not deletions.
+ *
+ * Re-parenting to a strict ancestor can neither create a cycle (the new
+ * parent lies on the old path to the root, so the path only shortens) nor a
+ * self-parent (the anchor is at least one level up). The input is copied, so
+ * the caller's array is never mutated.
+ */
+export function capDepth(parentOf, nodeCount, maxDepth) {
+  const next = Int32Array.from(parentOf);
+  const depth = assignDepth(next, nodeCount);
+  let removedCount = 0;
+  for (let i = 0; i < nodeCount; i++) {
+    if (depth[i] <= maxDepth) continue;
+    let node = i;
+    while (depth[node] >= maxDepth) node = next[node];
+    next[i] = node;
+    removedCount++;
+  }
+  return { parentOf: next, removedCount };
+}
+
+/**
+ * Passes 4 and 5. Keep the top `target` nodes by `articleCount`, then pull
+ * back every ancestor needed to make a kept node reachable from a root.
+ *
+ * `articleCount` must be the authoritative per-category page count (MediaWiki's
+ * `cat.cat_pages`, copied verbatim by ingest) — never a count of `member`
+ * rows, which only sees links that survived the meta filter and undercounts
+ * badly on exactly the categories that matter.
+ *
+ * The sort is a total order (count descending, then index ascending), so the
+ * cut is deterministic and independent of input order. Restoration walks up
+ * from each kept node through unkept ancestors; each ancestor is counted once,
+ * and because a restored ancestor is marked kept immediately, later walks stop
+ * at it. Restored nodes are exempt from the `target` cap — that exemption is
+ * the only mechanism by which low-count trunk categories (Physics at 42
+ * pages, against a ~304-page cut) exist in the atlas at all.
+ *
+ * Restoration only ever sets bits in `kept`; it never touches `parentOf`, so
+ * it cannot reintroduce a self-parent or a cycle. Nodes the rank step cut
+ * stay cut unless they lie on a kept node's ancestor chain — siblings,
+ * cousins and descendants of a kept node are not pulled in.
+ */
+export function rankAndCut(parentOf, depth, articleCount, nodeCount, target) {
+  const order = Array.from({ length: nodeCount }, (_, i) => i)
+    .filter(i => depth[i] >= 0)
+    .sort((a, b) => (articleCount[b] - articleCount[a]) || (a - b));
+
+  const kept = new Uint8Array(nodeCount);
+  let keptCount = 0;
+  for (const i of order) {
+    if (keptCount >= target) break;
+    kept[i] = 1;
+    keptCount++;
+  }
+
+  let restoredCount = 0;
+  for (let i = 0; i < nodeCount; i++) {
+    if (!kept[i]) continue;
+    let node = parentOf[i];
+    while (node !== -1 && !kept[node]) { kept[node] = 1; restoredCount++; node = parentOf[node]; }
+  }
+  return { kept, restoredCount };
+}
+
+/**
+ * The acyclicity gate for everything downstream. A forest is exactly a graph
+ * in which every node reaches a root, so "unreachable from any root" (depth
+ * -1 from `assignDepth`) is a cycle that survived — including the nodes
+ * merely hanging off one, which `assignDepth` also leaves at -1. Throws
+ * naming the stranded count, otherwise returns the depths.
+ */
+export function assertAcyclic(parentOf, nodeCount) {
+  const depth = assignDepth(parentOf, nodeCount);
+  const unreachable = [];
+  for (let i = 0; i < nodeCount; i++) if (depth[i] < 0) unreachable.push(i);
+  if (unreachable.length) {
+    throw new Error(
+      `cycle survived pruning: ${unreachable.length} node(s) unreachable from any root ` +
+      `(first: ${unreachable.slice(0, 5).join(', ')})`,
+    );
+  }
+  return depth;
+}
