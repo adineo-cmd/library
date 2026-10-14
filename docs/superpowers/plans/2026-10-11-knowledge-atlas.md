@@ -1085,7 +1085,7 @@ export const PATHS = {
 
 export const INGEST_STATS = {
   rawCategories: 0, afterMetaFilter: 0, keptParents: 0, keptMembers: 0,
-  linkRows: 0, resolvedTargets: 0, targetResolution: 0,
+  linkRows: 0, resolvedTargets: 0, keptTargets: 0, subcatRows: 0, targetResolution: 0,
 };
 
 /** Below this, the dump set is mismatched — refuse to continue. */
@@ -1151,16 +1151,29 @@ export async function ingest() {
     if (id !== undefined) idByPageId.set(v[0], id);
   });
 
+  // Last read of idByName. Every closure that captures it stays reachable for
+  // the rest of ingest, so the map is context-resident even though it is dead,
+  // and pass C allocates its two largest structures on top of it. Clearing
+  // returns the pages to the OS; nulling the binding would not, because those
+  // closures would still hold the map.
+  idByName.clear();
+
   // --- Pass A2: linktarget -> lt_id -> category name --------------------
   // cl_target_id is a linktarget.lt_id. ONLY namespace 14 (category pages)
   // matter here; other namespaces are article/file/special targets.
+  //
+  // Every ns-14 lt_id is kept, whether or not its category survived pass A, and
+  // DROPPED (-1) marks the ones that did not. That distinction is the whole
+  // point: "the target named a category we threw away" and "the target named
+  // nothing at all" are opposite failures, and only the second means the join is
+  // broken. On the real dumps 70.6% of categorylinks rows name a meta-filtered
+  // category, so collapsing the two would trip the guard on every correct run.
   const ltIdToName = new Map();
   await streamInsertRows(PATHS.linktarget, (table, v) => {
     if (table !== 'linktarget') return;
     if (v[LT_NAMESPACE] !== '14') return;
-    const name = normalizeCategoryName(v[LT_TITLE]);
-    const id = idByName.get(name);
-    if (id !== undefined) ltIdToName.set(Number(v[LT_ID]), id);
+    const id = idByName.get(normalizeCategoryName(v[LT_TITLE]));
+    ltIdToName.set(Number(v[LT_ID]), id === undefined ? DROPPED : id);
   });
   if (ltIdToName.size === 0) {
     throw new Error(
@@ -1194,14 +1207,28 @@ export async function ingest() {
   await streamInsertRows(PATHS.categorylinks, (table, v) => {
     if (table !== 'categorylinks') return;
     linkRows++;
-    const pageId = v[CL_FROM];
-    const parentCatId = ltIdToName.get(Number(v[CL_TARGET_ID]));
-    if (parentCatId === undefined) return;   // unresolvable target; counted by the guard
+    const target = ltIdToName.get(Number(v[CL_TARGET]));
+    if (target === undefined) return;   // unresolvable target; counted by the guard
     resolvedTargets++;
-    memberBatch.push([pageId, parentCatId]);
-    if (idByPageId.has(pageId)) parentBatch.push([pageId, parentCatId]);
+    if (target === DROPPED) return;    // named a category the meta filter removed
+    keptTargets++;
+    // cl_type splits the two edges. 'subcat' is this dump's spelling of a
+    // category-page link ('category' in older dumps); everything else files an
+    // article under a category. Only a subcat row produces a parent edge, so
+    // subcatRows is counted here — before the drops below — so an operator can
+    // tell "no subcat rows in this dump" from "subcat rows, all discarded".
+    if (v[CL_TYPE] === 'subcat' || v[CL_TYPE] === 'category') {
+      subcatRows++;
+      const child = idByPageId.get(Number(v[CL_FROM]));
+      // A category cannot be its own parent; a self edge would close a
+      // one-node cycle in the tree built downstream.
+      if (child === undefined || child === target) return;
+      parentBatch.push([child, target]);
+      if (parentBatch.length >= 50_000) { flushParents(parentBatch.splice(0)); }
+      return;
+    }
+    memberBatch.push([v[CL_FROM], target]);
     if (memberBatch.length >= 50_000) { flushMembers(memberBatch.splice(0)); }
-    if (parentBatch.length >= 50_000) { flushParents(parentBatch.splice(0)); }
   });
   if (memberBatch.length) flushMembers(memberBatch);
   if (parentBatch.length) flushParents(parentBatch);
@@ -1224,12 +1251,14 @@ export async function ingest() {
   INGEST_STATS.linkRows = linkRows;
   INGEST_STATS.resolvedTargets = resolvedTargets;
   INGEST_STATS.keptTargets = keptTargets;
+  INGEST_STATS.subcatRows = subcatRows;
   const rate = linkRows > 0 ? resolvedTargets / linkRows : 0;
   INGEST_STATS.targetResolution = rate;
   console.log(`cl_target_id -> lt_title resolution: ${resolvedTargets}/${linkRows} (${(rate*100).toFixed(2)}%)`);
   if (linkRows > 0) {
     console.log(`meta filter kept ${keptTargets}/${linkRows} targets (${(100 * keptTargets / linkRows).toFixed(2)}% of links)`);
   }
+  console.log(`subcat rows: ${subcatRows} (${INGEST_STATS.keptParents} parent edges written)`);
 
   db.close();
 
@@ -1244,6 +1273,12 @@ export async function ingest() {
   }
   if (INGEST_STATS.keptMembers === 0) {
     throw new Error('ingest produced zero member rows');
+  }
+  // The rate above proves only that the join worked. Parent edges come from
+  // cl_type='subcat' rows alone, so a run can clear every other guard and still
+  // write ~150M member rows with no hierarchy at all.
+  if (INGEST_STATS.keptParents === 0) {
+    throw new Error(`ingest produced zero parent edges from ${subcatRows} subcat rows`);
   }
 
   return INGEST_STATS;
@@ -1265,9 +1300,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 - [ ] **Step 12: Run all script tests**
 
 Run: `npx vitest run scripts/`
-Expected: PASS — 17 tests across three files.
+Expected: PASS — 87 tests across five files.
 
 - [ ] **Step 13: Verify ingest against the fixture**
+
+`ingest()` takes an overrides object, not a mutable `PATHS`; all four dumps must
+point at the fixture, since `ingest` reads `PATHS` at call time.
 
 ```bash
 node -e "
@@ -1277,15 +1315,29 @@ const sql = readFileSync('scripts/fixtures/mini-dump.sql', 'utf8');
 writeFileSync('scripts/fixtures/mini.sql.gz', gzipSync(Buffer.from(sql, 'utf8')));
 " && node --input-type=module -e "
 import { ingest } from './scripts/ingest.mjs';
-import { PATHS } from './scripts/ingest.mjs';
-PATHS.page = 'scripts/fixtures/mini.sql.gz';
-PATHS.categorylinks = 'scripts/fixtures/mini.sql.gz';
-const s = await ingest();
+import { resolve } from 'node:path';
+const dump = resolve('scripts/fixtures/mini.sql.gz');
+const s = await ingest({
+  page: dump, category: dump, categorylinks: dump, linktarget: dump,
+  db: resolve('atlas-work/fixture-check.db'),
+});
 console.log(JSON.stringify(s, null, 2));
 "
 ```
 
-Expected: `rawCategories` 3 — `Physical sciences`, `Thermodynamics`, `Information theory`. The two `CS1` categories are filtered. `keptParents` 3, `keptMembers` 4.
+Expected, for `scripts/fixtures/mini-dump.sql`:
+
+| stat | value | why |
+| --- | --- | --- |
+| `rawCategories` | 4 | every `category` row read |
+| `afterMetaFilter` | 3 | `CS1_references_categories` dropped |
+| `linkRows` | 14 | every `categorylinks` row read |
+| `resolvedTargets` | 14 | all 14 `cl_target_id`s are ns-14 `lt_id`s |
+| `keptTargets` | 13 | one names a meta-filtered category (`DROPPED`) |
+| `subcatRows` | 3 | `cl_type='subcat'` rows, counted before the self-edge drop |
+| `keptParents` | 2 | page 3 files itself under its own category; that self edge is dropped |
+| `keptMembers` | 10 | the 11 non-subcat rows, minus the one naming a filtered category |
+| `targetResolution` | 1 | 14/14 |
 
 **If these counts differ, the namespace check or the meta filter is wrong. Do not proceed until they match.**
 
