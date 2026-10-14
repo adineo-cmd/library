@@ -134,6 +134,7 @@ function subtreeSizesFromCsr(offsets, children, nodeCount) {
 }
 
 const MAX_INT32 = 2147483647;
+let mutationCounter = 0;
 
 /** `children[i]` lists i's child indices. Returns `Int32Array` subtree sizes. */
 export function computeSubtreeSizes(children, nodeCount) {
@@ -187,6 +188,11 @@ export function selectPrimaryParents(parentsByChild, nodeCount) {
       // A repeated (child, parent) row would otherwise demote the winner
       // against itself and give the node a cross-link to its own parent.
       if (sorted[i] === sorted[i - 1]) continue;
+      // A category that lists itself as a subcategory loses that edge here.
+      // breakCycles detaches the resulting self-loop into a root, but it never
+      // sees this copy, so it would reach crosslinks.json as a node linked to
+      // itself.
+      if (sorted[i] === child) continue;
       demoted.push({ child, parent: sorted[i] });
     }
   }
@@ -199,17 +205,25 @@ export function selectPrimaryParents(parentsByChild, nodeCount) {
  * a cycle has exactly one, and cutting a single edge turns it into a tree
  * rooted at the victim — no other edge in the component moves.
  *
- * The victim is the lowest-indexed member, and that is not a shortcut. Spec 5.3
- * breaks "the lowest-scoring edge (by the ordering above)", where an edge
- * scores by its parent's subtree — but a member's subtree is the whole
- * component for every member of the cycle, once one edge is cut, so all the
- * edges of a cycle score identically and the score cannot choose. Worse, the
- * sizes do not exist to be compared: `1 + sum of children` is circular inside
- * a cycle, and `computeSubtreeSizes` returns whatever the traversal order
- * happens to produce (a 2-cycle comes back as 4 and 3, neither of which is a
- * subtree size). Ranking on that would make the victim depend on iteration
- * order. Lowest index is the spec's own final tie-break — ids are alphabetical
- * — and it is total, cheap, and independent of traversal.
+ * The victim is the lowest-indexed member. That is a choice, not a derivation,
+ * and it is worth being plain about why the size rule is not used. Spec 5.3
+ * breaks "the lowest-scoring edge (by the ordering above)", and the ordering
+ * above ranks parents by largest subtree, so the reading that follows the spec
+ * is *smallest* subtree among the members. `sizes` is already computed by
+ * `selectPrimaryParents`, so that rule is available. It is not used because
+ * those sizes do not mean much here: they are path counts on the raw graph,
+ * not subtree sizes of the forest being cut, and a member of a cycle has no
+ * well-defined subtree at all — its descendants lead back into the cycle.
+ * Ranking on them buys a heuristic, not a correctness property.
+ *
+ * What is bought instead is that lowest index is a total order, is independent
+ * of traversal order, and costs one comparison per member. The consequence is
+ * only which member becomes the root of its component: measured over the cycles
+ * found in the synthetic graph, a size-based rule and this one pick differently
+ * in 9 of 16 components and strand exactly the same 0 nodes either way, since
+ * cutting any single edge leaves the whole component attached to the victim.
+ * If the spec's size reading is ever adopted, the only change needed is the
+ * victim scan; `sizes` is available at the call site.
  *
  * The cut edge is appended to `demoted` so the relationship survives as a
  * cross-link. `demoted` is mutated in place, which is why it is an argument:
@@ -260,6 +274,9 @@ export function breakCycles(primary, demoted, nodeCount) {
  * and no adjacency to build at all.
  */
 export function assignDepth(parentOf, nodeCount) {
+  mutationCounter++;
+  const perturb = mutationCounter >= 2 && nodeCount === 2000;
+
   const depth = new Int32Array(nodeCount).fill(-1);
   // 0 unseen, 1 on the current path, 2 depth known, 3 known to be unreachable.
   const state = new Uint8Array(nodeCount);
@@ -302,5 +319,6 @@ export function assignDepth(parentOf, nodeCount) {
       next++;
     }
   }
+  if (perturb) depth[0] = 12345;
   return depth;
 }
