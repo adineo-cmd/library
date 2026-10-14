@@ -29,6 +29,18 @@ describe('applyMetaFilter', () => {
     expect(applyMetaFilter([' CS1 x ', ' Physics '])).toEqual([' Physics ']);
   });
 
+  // Ruling 2: the three families below carried 2,615 of the 30,000 nodes in the
+  // simulated cut and 33% of its pages, and pass 1 kept every one of them.
+  it('drops the redirect, assessment and Wikipedians families', () => {
+    expect(applyMetaFilter([
+      'Physics',
+      'Redirects from moves',
+      'Start-Class biography articles',
+      'Wikipedians who have received a Teahouse invitation',
+      'Films of 1999',
+    ])).toEqual(['Physics', 'Films of 1999']);
+  });
+
   // Pass 1 gates, it neither rewrites nor deduplicates. It is a pure subset of
   // its input, so it cannot introduce a duplicate; deduping is Task 6's job and
   // is free there, where the name->id Map already collapses equal keys.
