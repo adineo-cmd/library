@@ -85,7 +85,7 @@ describe('selectPrimaryParents', () => {
   });
 
   // The rule that decides real content: a broad field beats an alphabetically
-  // earlier narrow one. Node 0 is a leaf; node 1 carries eight descendants.
+  // earlier narrow one. Node 0 is a leaf; node 1 carries four descendants.
   it('prefers a bigger subtree over a lower index', () => {
     //      1
     //     /|\
@@ -101,16 +101,45 @@ describe('selectPrimaryParents', () => {
     expect(p2[2]).toBe(1);
   });
 
+  // Size is the first sort key and index only ever breaks ties — a lower-index
+  // parent cannot win while carrying a *smaller* subtree, so the only
+  // observable direction is the higher-index parent winning on size. Both a
+  // two-way and a three-way contest are pinned here.
+  it('ranks competing parents by subtree size', () => {
+    // 0 -> 2 and 1 -> 2 and 3 -> 1. sizes 2,3,1,1: node 1 wins on size,
+    // a pure (a - b) comparator would have taken node 0.
+    const twoWay = selectPrimaryParents([[], [], [0, 1], [1]], 4);
+    expect(Array.from(twoWay.sizes)).toEqual([2, 3, 1, 1]);
+    expect(twoWay.primary[2]).toBe(1);
+    expect(twoWay.demoted).toEqual([{ child: 2, parent: 0 }]);
+
+    // Node 2 has three parents. sizes 3,7,2,3,1,1: node 1 wins outright, and
+    // the losing two are demoted in size order.
+    const threeWay = selectPrimaryParents([[], [], [0, 1, 3], [1], [1], [2]], 6);
+    expect(Array.from(threeWay.sizes)).toEqual([3, 7, 2, 3, 1, 1]);
+    expect(threeWay.primary[2]).toBe(1);
+    expect(threeWay.demoted).toEqual([{ child: 2, parent: 0 }, { child: 2, parent: 3 }]);
+  });
+
   it('demotes the losing candidates', () => {
     const { primary, demoted } = selectPrimaryParents([[], [], [1, 0], [], []], 4);
     expect(primary[2]).toBe(0);
     expect(demoted).toEqual([{ child: 2, parent: 1 }]);
   });
 
+  // Determinism is order-independence, not just "a pure function called twice":
+  // listing each node's parents in a different order must not move a single
+  // edge, because the sort is a total order and the adjacency is built by
+  // ascending child index.
   it('is deterministic across runs', () => {
-    const a = selectPrimaryParents([[], [], [1, 0], [], []], 4).primary;
-    const b = selectPrimaryParents([[], [], [1, 0], [], []], 4).primary;
-    expect(Array.from(a)).toEqual(Array.from(b));
+    const base = [[], [2, 3], [0], [], [1, 2, 3], [1]];
+    const shuffled = [[], [3, 2], [0], [], [2, 3, 1], [1]];
+    const a = selectPrimaryParents(base, 6);
+    const b = selectPrimaryParents(shuffled, 6);
+    expect(Array.from(b.primary)).toEqual(Array.from(a.primary));
+    expect(Array.from(b.sizes)).toEqual(Array.from(a.sizes));
+    expect(b.demoted).toEqual(a.demoted);
+    expect(a.demoted.length).toBeGreaterThan(0);
   });
 
   it('leaves a node with no parents as a root', () => {
@@ -122,9 +151,11 @@ describe('selectPrimaryParents', () => {
   // Depth is undefined until primary parents exist, so "shallower parent" cannot
   // be a tie-break here. The remaining total order is (subtree desc, index
   // asc) — and stable ids are alphabetical, so that is the spec's "name
-  // ascending" tie-break with the index standing in for the name.
+  // ascending" tie-break with the index standing in for the name. This graph
+  // is a genuine tie: both parents have subtree 2, node 2 is a leaf.
   it('breaks a subtree tie on the lower index', () => {
-    const { primary, demoted } = selectPrimaryParents([[], [2], [0, 1]], 3);
+    const { primary, demoted, sizes } = selectPrimaryParents([[], [], [0, 1]], 3);
+    expect(Array.from(sizes)).toEqual([2, 2, 1]);
     expect(primary[2]).toBe(0);
     expect(demoted).toEqual([{ child: 2, parent: 1 }]);
   });
@@ -136,6 +167,25 @@ describe('selectPrimaryParents', () => {
     expect(selectPrimaryParents([[], [], [1, 1]], 4).demoted).toEqual([]);
     expect(selectPrimaryParents([[], [], [1, 0, 0]], 4).demoted)
       .toEqual([{ child: 2, parent: 1 }]);
+  });
+
+  it('never emits a cross-link from a node to itself', () => {
+    // Node 3 lists itself as a subcategory. The self-edge is also its smaller
+    // parent (sizes 2 vs 3), so it loses the ranking and would be demoted —
+    // breakCycles never sees that copy, so it has to be dropped here.
+    const { primary, demoted } = selectPrimaryParents([[], [], [], [2, 3], []], 5);
+    expect(primary[3]).toBe(2);
+    expect(demoted).toEqual([]);
+
+    // When the self-edge wins the ranking it becomes a self-loop in the primary
+    // forest, and breakCycles detaches that into a root — again with no self
+    // cross-link.
+    const won = selectPrimaryParents([[], [3], [], [3], [3], [2]], 6);
+    expect(won.primary[3]).toBe(3);
+    const demoted2 = [];
+    const fixed = breakCycles(won.primary, demoted2, 6);
+    expect(fixed[3]).toBe(-1);
+    expect(demoted2).toEqual([]);
   });
 
   it('does not mutate its input', () => {
@@ -173,10 +223,10 @@ describe('breakCycles', () => {
     expect(Array.from(assignDepth(fixed, 4))).toEqual([0, 2, 1, 0]);
   });
 
-  // The victim is the lowest index. Size cannot decide it: a member's subtree
-  // is the whole component once one edge is cut, and before the cut the
-  // recurrence is circular, so the "subtree" a member reports depends on the
-  // traversal order that reached it.
+  // The victim is the lowest index. Not derived from size: `sizes` is a path
+  // count on the raw graph, and a cycle member has no well-defined subtree, so
+  // a size rule would be a heuristic. Lowest index is total, order-independent
+  // and costs one comparison. Only the component's root changes either way.
   it('detaches the lowest-index member of the cycle', () => {
     // 0 -> 1 -> 2 -> 0, plus 3 -> 2 and 4 -> 3. Cutting 0 leaves 3 and 4
     // hanging off 2 and still attached to the new root.
@@ -196,6 +246,21 @@ describe('breakCycles', () => {
     const fixed = breakCycles(Int32Array.from([1, 2, 0, 1]), [], 4);
     expect(fixed[0]).toBe(-1);
     expect(Array.from(assignDepth(fixed, 4))).toEqual([0, 2, 1, 3]);
+  });
+
+  // Every other cycle test here is entered from a root or from below at the
+  // lowest member, so it cannot tell the min-scan from "take the member the
+  // walk happened to arrive at". Here the walk 3 -> 12 -> 5 -> 12 arrives at
+  // 12, which is the *highest*-indexed member: first-found would detach 12 and
+  // leave 5 as its parent, lowest-index detaches 5.
+  it('detaches the lowest-index member when the walk enters at a higher one', () => {
+    const demoted = [];
+    const fixed = breakCycles(Int32Array.from([-1, -1, -1, 12, -1, 12, -1, -1, -1, -1, -1, -1, 5]), demoted, 13);
+    expect(fixed[5]).toBe(-1);
+    expect(fixed[12]).toBe(5);
+    expect(demoted).toEqual([{ child: 5, parent: 12 }]);
+    expect(Array.from(assignDepth(fixed, 13)))
+      .toEqual([0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
   });
 
   // `Math.min(...cycle)` throws RangeError once a cycle has ~10^5 members, and
@@ -334,6 +399,8 @@ describe('pass 2 end to end', () => {
     }
   });
 
+  // Byte-identical across repeated runs, for every output the pass produces —
+  // not just the parent array.
   it('is byte-identical across repeated runs', () => {
     const build = () => {
       const n = 2000;
@@ -345,10 +412,14 @@ describe('pass 2 end to end', () => {
         for (let k = 0; k < count; k++) candidates.add(Math.min(Math.floor(rand() * n), n - 1));
         parentsByChild[i] = [...candidates];
       }
-      const { primary, demoted } = selectPrimaryParents(parentsByChild, n);
+      const { primary, demoted, sizes } = selectPrimaryParents(parentsByChild, n);
       const fixed = breakCycles(primary, demoted, n);
-      return JSON.stringify([Array.from(primary), demoted, Array.from(fixed)]);
+      return JSON.stringify([
+        Array.from(primary), demoted, Array.from(sizes),
+        Array.from(fixed), Array.from(assignDepth(fixed, n)),
+      ]);
     };
-    expect(build()).toBe(build());
+    const first = build();
+    expect(first).toBe(build());
   });
 });
