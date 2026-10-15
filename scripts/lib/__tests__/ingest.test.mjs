@@ -4,7 +4,8 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { ingest, missingInputs, PATHS, INGEST_STATS } from '../../ingest.mjs';
+import { ingest, missingInputs, assertIndexes, PATHS, INGEST_STATS } from '../../ingest.mjs';
+import { finalizeIndexes, REQUIRED_INDEXES } from '../db.mjs';
 
 const FIXTURE_SQL = readFileSync(new URL('../../fixtures/mini-dump.sql', import.meta.url), 'utf8');
 
@@ -68,38 +69,76 @@ describe('ingest', () => {
       { article: '2', name: 'Information theory' },
       { article: '2', name: 'Physical sciences' },
       { article: '2', name: 'Thermodynamics' },
+      { article: '6', name: 'CS1 references categories' },
       { article: '8', name: 'Information theory' },
       { article: '8', name: 'Thermodynamics' },
       { article: '9', name: 'Physical sciences' },
       { article: '9', name: 'Thermodynamics' },
     ]);
     expect(stats.keptParents).toBe(2);
-    expect(stats.keptMembers).toBe(10);
+    expect(stats.keptMembers).toBe(11);
   });
 
   it('stores cat_pages verbatim and keeps it distinct from the member count', async () => {
     // Task 6 reads articleCount from cat_pages. Counting member rows instead
-    // undercounts, because member rows only exist for links that survived the
-    // meta filter and the join.
+    // undercounts. Note the fourth category: the meta filter used to drop it
+    // here, which meant cat_pages was reported for a table that no longer held
+    // every category. It is written now and removed later, in prune.mjs.
     const paths = fixturePaths();
     await ingest(paths);
 
     expect(rows(paths.db, CATS)).toEqual([
+      { name: 'CS1 references categories', cat_pages: 1, cat_subcats: 1 },
       { name: 'Information theory', cat_pages: 5, cat_subcats: 0 },
       { name: 'Physical sciences', cat_pages: 9, cat_subcats: 2 },
       { name: 'Thermodynamics', cat_pages: 7, cat_subcats: 1 },
     ]);
     expect(rows(paths.db, MEMBER_COUNTS)).toEqual([
+      { name: 'CS1 references categories', n: 1 },
       { name: 'Information theory', n: 3 },
       { name: 'Physical sciences', n: 3 },
       { name: 'Thermodynamics', n: 4 },
     ]);
   });
 
-  it('counts the categories the meta filter keeps, not the rows it reads', async () => {
-    const stats = await ingest(fixturePaths());
+  // The defect: ingest used to drop `isMaintenanceCategory` names as they
+  // arrived. That made `cat` and `parent` already-filtered, so a category whose
+  // parent was filtered away never received a parent edge at all — 42.8% of the
+  // real category table had no parent row — and broad fields whose ancestry
+  // touched a filtered node could never be restored by pass 5. The meta filter
+  // is now a graph-time operation in prune.mjs; ingest writes the complete
+  // graph and filters nothing.
+  it('writes every category, including the ones the meta filter will remove', async () => {
+    const paths = fixturePaths();
+    const stats = await ingest(paths);
     expect(stats.rawCategories).toBe(4);
-    expect(stats.afterMetaFilter).toBe(3);
+    expect(stats.insertedCategories).toBe(4);
+    expect(rows(paths.db, CATS).map(r => r.name)).toContain('CS1 references categories');
+    // There is no `afterMetaFilter` any more: ingest filters nothing, and a
+    // counter that claimed otherwise is how the defect stayed invisible.
+    expect(stats.afterMetaFilter).toBeUndefined();
+  });
+
+  it('gives a maintenance category a parent edge, instead of stranding it', async () => {
+    // 'CS1 references categories' is ns-14 page 7, filed under 'Physical
+    // sciences' by a subcat row. Under the old insert-time filter that row
+    // resolved to nothing: the category was gone, so no edge was written, so
+    // page 7's category was a root in the atlas. With the filter moved to graph
+    // time the edge exists and prune.mjs is what removes the node.
+    const paths = fixturePaths({
+      categorylinks: gz(withRows('categorylinks', [
+        "(3,'PHYSICALSCIENCES','2026-07-07 10:01:29','','subcat',1,20184598)",
+        "(4,'THERMODYNAMICS','2026-07-07 10:01:29','','subcat',1,20184598)",
+        "(7,'CS1REFERENCESCATEGORIES','2026-07-07 10:01:29','','subcat',1,20184598)",
+        "(1,'PHYSICS','2026-07-07 10:01:29','','page',1,20184598)",
+      ])),
+    });
+    const stats = await ingest(paths);
+    expect(stats.keptParents).toBe(2);
+    expect(rows(paths.db, PARENTS)).toEqual([
+      { child: 'CS1 references categories', parent: 'Physical sciences' },
+      { child: 'Thermodynamics', parent: 'Physical sciences' },
+    ]);
   });
 
   it('reports the cl_target_id resolution rate and logs it', async () => {
@@ -108,11 +147,12 @@ describe('ingest', () => {
     try {
       const stats = await ingest(fixturePaths());
       expect(stats.linkRows).toBe(14);
-      // All 14 cl_target_ids are real ns-14 lt_ids, so all 14 resolve. One of
-      // the categories they name is dropped by the meta filter, which is a
-      // separate, expected loss and is reported on its own.
+      // All 14 cl_target_ids are real ns-14 lt_ids, so all 14 resolve — and all
+      // 14 are written. The last one names a maintenance category, which used to
+      // be dropped here; the filter runs later now, so keeping it is the
+      // correct behaviour rather than an accident.
       expect(stats.resolvedTargets).toBe(14);
-      expect(stats.keptTargets).toBe(13);
+      expect(stats.keptTargets).toBe(14);
       expect(stats.targetResolution).toBe(1);
       expect(logged.join('\n')).toMatch(/14\/14 \(100\.00%\)/);
     } finally {
@@ -120,37 +160,33 @@ describe('ingest', () => {
     }
   });
 
-  it('does not let meta-filtered categories trip the resolution guard', async () => {
-    // Measured on the real dumps: 70.6% of categorylinks rows name a category
-    // the meta filter drops, because maintenance categories are the most
-    // heavily linked ones on Wikipedia. Gating the join rate on surviving
-    // categories would therefore abort every real run at 90% and train the
-    // operator to ignore the guard. The guard measures the join; the meta
-    // filter's cost is logged separately.
+  it('cannot be tripped by maintenance categories, because ingest filters nothing', async () => {
+    // This used to be the sharpest hazard in the file. 70.6% of categorylinks
+    // rows on the real dumps name a category the meta filter drops, so gating
+    // the join rate on surviving categories aborted every correct run at 90% and
+    // trained the operator to ignore the guard. It needed a second counter,
+    // `keptTargets`, to stay honest about the difference.
     //
-    // The ratio is 70/30 to match the measured 29.26% survival. It is chosen so
-    // this test actually pins its own claim: at a 91/9 split the wrong
-    // denominator (keptTargets/linkRows = 0.91) would still clear the 0.9 floor
-    // and the guard could be broken without this test noticing. At 0.70 the
-    // wrong denominator aborts the run and the test fails.
-    const dropped = [];
-    for (let i = 0; i < 30; i++) dropped.push(`(1,'A','','','page',1,556)`);
-    const kept = [];
-    for (let i = 0; i < 69; i++) kept.push(`(1,'A','','','page',1,555)`);
+    // Both the hazard and the workaround are gone: the meta filter is a
+    // graph-time operation, so every resolvable target reaches the database and
+    // `keptTargets === resolvedTargets` unless a link names a category the
+    // dumps do not carry at all. This pins that, on a fixture where 30% of the
+    // links point at a maintenance category — the shape that used to fail.
+    const rows_ = [];
+    for (let i = 0; i < 30; i++) rows_.push("(1,'A','','','page',1,556)");
+    for (let i = 0; i < 69; i++) rows_.push("(1,'A','','','page',1,555)");
     // One subcat row, so the run also clears the keptParents floor. It files
-    // 'Applied sciences' under 'Physics' and contributes no member row, so the
-    // 69/30 member ratio this test exists to pin is untouched.
-    kept.push(`(3,'APPLIEDSCIENCES','','','subcat',1,555)`);
+    // 'Applied sciences' under 'Physics' and contributes no member row.
+    rows_.push("(3,'APPLIEDSCIENCES','','','subcat',1,555)");
     const paths = {
       page: gz("CREATE TABLE `page` (`page_id` int, `page_namespace` int, `page_title` varbinary(255));\n"
         + "INSERT INTO `page` VALUES\n(1,0,'Physics'),\n(2,14,'Physics'),\n(3,14,'Applied sciences');"),
       category: gz("CREATE TABLE `category` (`cat_id` int, `cat_title` varbinary(255), `cat_pages` int, `cat_subcats` int, `cat_files` int);\n"
         + "INSERT INTO `category` VALUES\n(1,'Physics',10,0,0),\n(2,'CS1_references',99,0,0),\n(3,'Applied_sciences',4,1,0);"),
-      // 556 is a genuine category target whose category the meta filter drops.
       linktarget: gz("CREATE TABLE `linktarget` (`lt_id` bigint, `lt_namespace` int, `lt_title` varbinary(255));\n"
         + "INSERT INTO `linktarget` VALUES\n(555,14,'Physics'),\n(556,14,'CS1_references');"),
       categorylinks: gz("CREATE TABLE `categorylinks` (`cl_from` int, `cl_sortkey` varbinary(230), `cl_timestamp` timestamp, `cl_sortkey_prefix` varbinary(255), `cl_type` enum('page','subcat','file'), `cl_collation_id` smallint, `cl_target_id` bigint);\n"
-        + `INSERT INTO \`categorylinks\` VALUES\n${[...kept, ...dropped].join(',\n')};`),
+        + `INSERT INTO \`categorylinks\` VALUES\n${rows_.join(',\n')};`),
       db: scratch(),
     };
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -159,9 +195,13 @@ describe('ingest', () => {
       expect(stats.linkRows).toBe(100);
       expect(stats.resolvedTargets).toBe(100);
       expect(stats.targetResolution).toBe(1);
-      expect(stats.keptTargets).toBe(70);
-      expect(stats.keptMembers).toBe(69);
+      expect(stats.keptTargets).toBe(100);
+      expect(stats.keptMembers).toBe(99);
       expect(stats.keptParents).toBe(1);
+      // Both categories are on disk, maintenance one included.
+      expect(rows(paths.db, CATS).map(r => r.name)).toEqual(
+        ['Applied sciences', 'CS1 references', 'Physics'],
+      );
     } finally {
       spy.mockRestore();
     }
@@ -185,7 +225,64 @@ describe('ingest', () => {
     await ingest(fixturePaths());
     expect(INGEST_STATS.linkRows).toBe(14);
     expect(INGEST_STATS.resolvedTargets).toBe(14);
-    expect(INGEST_STATS.keptTargets).toBe(13);
+    expect(INGEST_STATS.keptTargets).toBe(14);
+  });
+});
+
+describe('index safety net', () => {
+  // The working database was once found with no indexes at all, and the failure
+  // is invisible in every counter ingest prints. `selectMemberSample` issues
+  // `WHERE cat = ? LIMIT 200` once per kept category; without `idx_member_cat`
+  // that is ~30,000 full scans of a 38.25M-row table. The atlas built is still
+  // correct — it just takes 20 minutes where it should take 100 seconds — so
+  // nothing fails and the only symptom is that the machine feels slow.
+  it('leaves all four indexes in sqlite_master when ingest completes', async () => {
+    const paths = fixturePaths();
+    await ingest(paths);
+    expect(rows(paths.db,
+      `SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%' ORDER BY name`,
+    ).map(r => r.name)).toEqual([...REQUIRED_INDEXES].sort());
+  });
+
+  it('throws, naming the index, when one is missing', () => {
+    const db = scratch();
+    const handle = new Database(db);
+    handle.exec('CREATE TABLE member (article TEXT, cat INTEGER)');
+    handle.exec('CREATE TABLE parent (child INTEGER, parent INTEGER)');
+    handle.exec('CREATE INDEX idx_member_cat ON member(cat)');
+    try {
+      expect(() => assertIndexes(handle)).toThrow(/idx_member_article/);
+      expect(() => assertIndexes(handle)).toThrow(/idx_parent_child/);
+      // The message has to be actionable: this is a "the build is 12x over
+      // budget, silently" failure, and the operator is reading one line.
+      expect(() => assertIndexes(handle)).toThrow(/20-minute/);
+      finalizeIndexes(handle);
+      expect(assertIndexes(handle)).toEqual([...REQUIRED_INDEXES]);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it('recreates a missing index through finalizeIndexes', () => {
+    // The two halves are one contract: finalizeIndexes creates, assertIndexes
+    // verifies. Whichever of the four goes missing, the pair covers it.
+    const db = scratch();
+    const handle = new Database(db);
+    handle.exec('CREATE TABLE member (article TEXT, cat INTEGER)');
+    handle.exec('CREATE TABLE parent (child INTEGER, parent INTEGER)');
+    try {
+      for (const name of REQUIRED_INDEXES) {
+        handle.exec(`DROP INDEX IF EXISTS ${name}`);
+      }
+      expect(() => assertIndexes(handle)).toThrow(/4 index\(es\) are missing/);
+      finalizeIndexes(handle);
+      expect(assertIndexes(handle)).toHaveLength(4);
+      // Idempotent, so a second call cannot fail on an existing index.
+      finalizeIndexes(handle);
+      expect(assertIndexes(handle)).toHaveLength(4);
+    } finally {
+      handle.close();
+    }
   });
 });
 

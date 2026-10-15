@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { streamInsertRows, readDumpSchema } from './lib/sql-stream.mjs';
-import { normalizeCategoryName, isMaintenanceCategory } from './lib/categories.mjs';
-import { openDb, assignStableIds, finalizeIndexes } from './lib/db.mjs';
+import { normalizeCategoryName } from './lib/categories.mjs';
+import { openDb, assignStableIds, finalizeIndexes, REQUIRED_INDEXES } from './lib/db.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORK = resolve(ROOT, 'atlas-work');
@@ -24,7 +24,7 @@ export const PATHS = {
 };
 
 export const INGEST_STATS = {
-  rawCategories: 0, afterMetaFilter: 0, keptParents: 0, keptMembers: 0,
+  rawCategories: 0, insertedCategories: 0, keptParents: 0, keptMembers: 0,
   linkRows: 0, resolvedTargets: 0, keptTargets: 0, subcatRows: 0, targetResolution: 0,
 };
 
@@ -43,6 +43,41 @@ const CHUNK_SIZE = 8 * 1024 * 1024;
 
 /** Every dump the join needs. `overrides` replaces paths, for tests. */
 const DUMPS = ['page', 'category', 'categorylinks', 'linktarget'];
+
+/**
+ * Assert that the four indexes `finalizeIndexes` promises are actually in
+ * `sqlite_master`.
+ *
+ * This is not belt-and-braces. The working database was once found with no
+ * indexes at all — `finalizeIndexes` had not been reached, or the file was
+ * carried over from an older run — and the failure mode is invisible in every
+ * counter ingest prints. `selectMemberSample` issues `WHERE cat = ? LIMIT 200`
+ * once per kept category; with `idx_member_cat` missing that is ~30,000 full
+ * scans of a 38.25M-row table, and a run that took 100 seconds took 20 minutes
+ * instead. The build was still correct, just 12x over budget, so nothing
+ * failed — it only looked like the machine got slower.
+ *
+ * Checking `sqlite_master` after `finalizeIndexes` rather than trusting the
+ * call turns that into a loud, immediate failure at the one point where the
+ * indexes are known to have just been created. Exported so the assertion can
+ * be tested against a database that has genuinely lost one.
+ */
+export function assertIndexes(db) {
+  const present = new Set(
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all()
+      .map(r => r.name),
+  );
+  const missing = REQUIRED_INDEXES.filter(name => !present.has(name));
+  if (missing.length) {
+    throw new Error(
+      `ingest finished but ${missing.length} index(es) are missing from sqlite_master: `
+      + `${missing.join(', ')}. Without idx_member_cat every selectMemberSample `
+      + 'lookup is a full scan of the member table, which turns a 100-second '
+      + 'build into a 20-minute one without failing anything.',
+    );
+  }
+  return REQUIRED_INDEXES;
+}
 
 export function missingInputs(overrides = {}) {
   return DUMPS
@@ -134,6 +169,34 @@ export async function ingest(overrides = {}) {
 
   // --- Pass A: the category table, the authoritative category list. ---
   //
+  // EVERY category is written here, maintenance scaffolding included. This used
+  // to drop `isMaintenanceCategory(name)` names as they arrived, and that one
+  // line was an architectural defect rather than a shortcut:
+  //
+  //   * it ran before the graph existed, so the meta filter had no graph to
+  //     reason about and could only ever remove rows;
+  //   * `idByPageId` (pass B) only ever held surviving categories, and the
+  //     parent edge in pass C is written only when the child resolves there,
+  //     so a category whose parent was filtered away got NO parent edge at
+  //     all. Measured on the real dumps: 1,061,927 of 2,481,394 categories
+  //     (42.8%) had no parent row, and 4,000 sampled atlas roots had none
+  //     either. The filter was silently amputating 43% of the hierarchy and
+  //     promoting the stumps to roots, which is where 18.1% maintenance roots
+  //     came from;
+  //   * it also made small fields unreachable. Pass 5 restores the ancestors of
+  //     kept nodes, but it can only walk edges that exist, so a broad field
+  //     whose ancestry touched a filtered node could never be restored and was
+  //     cut for being small (Art 38 pages, Religion 32, Music 46 — all below
+  //     the ~304-page cut).
+  //
+  // The meta filter is now a graph-time operation: prune.mjs marks nodes and
+  // splices each survivor up to its nearest surviving ancestor, so removing a
+  // node can never orphan a child. `isMaintenanceCategory` stays the single
+  // source of truth for what counts as maintenance; only *when* it runs moved.
+  //
+  // The only name test left here is emptiness: a category whose normalised name
+  // is blank has no identity to key `cat.name` on, and `name` is UNIQUE.
+  //
   // A name-keyed map rather than an id-keyed one: nothing downstream needs a
   // cat_id, because categorylinks does not reference one. The ids stored are
   // provisional; assignStableIds renumbers cat alphabetically at the end and
@@ -156,7 +219,7 @@ export async function ingest(overrides = {}) {
     guardWidth('category', v, catCols.length);
     rawCategories++;
     const name = normalizeCategoryName(v[CAT_TITLE]);
-    if (!name || isMaintenanceCategory(name)) return;
+    if (!name) return;
     catBatch.push([
       name, Number(v[CAT_PAGES]) || 0, Number(v[CAT_SUBCATS]) || 0,
     ]);
@@ -165,7 +228,7 @@ export async function ingest(overrides = {}) {
   if (catBatch.length) insertCats(catBatch);
 
   INGEST_STATS.rawCategories = rawCategories;
-  INGEST_STATS.afterMetaFilter = db.prepare('SELECT COUNT(*) AS n FROM cat').get().n;
+  INGEST_STATS.insertedCategories = db.prepare('SELECT COUNT(*) AS n FROM cat').get().n;
 
   // --- Pass A2: linktarget, which is what categorylinks actually points at ---
   //
@@ -181,14 +244,15 @@ export async function ingest(overrides = {}) {
   // lt_title is underscored exactly as cat_title is and page titles are not, so
   // both sides are normalised before they meet.
   //
-  // Every ns-14 lt_id is kept, whether or not its category survived Pass A, and
-  // DROPPED marks the ones that did not. That distinction is the whole point:
-  // "the target named a category we threw away" and "the target named nothing
-  // at all" are opposite failures, and only the second one means the join is
-  // broken. Measured on the real dumps, 70.6% of categorylinks rows name a
-  // meta-filtered category — maintenance categories are the most heavily
-  // linked ones on Wikipedia — so collapsing the two would trip the guard on
-  // every correct run.
+  // Every ns-14 lt_id is kept, and DROPPED now marks only the ones that name a
+  // category this dump does not have at all — a linktarget row pointing past
+  // the end of the category table, or a title that normalises onto nothing.
+  // "The target named a category we are not using" is no longer a state that
+  // can occur here, because nothing is discarded at this point: the meta filter
+  // runs later, in prune.mjs, against the finished graph. DROPPED stays
+  // because that distinction is still the whole point — "the target named a
+  // category the dump lacks" and "the target named nothing at all" are
+  // opposite failures, and only the second one means the join is broken.
   const ltIdToName = new Map();
 
   await streamInsertRows(paths.linktarget, (table, v) => {
@@ -212,6 +276,13 @@ export async function ingest(overrides = {}) {
   // child of a subcategory edge. Titles are matched through the category
   // table's names because the two dumps disagree on underscores: page titles
   // carry none, cat_title carries them.
+  //
+  // Every ns-14 page lands in `idByPageId`, with no exceptions to carve out.
+  // That is what makes the graph complete: pass C writes a parent edge
+  // whenever the child resolves here, so a page held back here loses its
+  // parent row and is promoted to a root forever. `idByName` now holds the
+  // whole category table (pass A inserts everything), so the only pages this
+  // drops are ns-14 pages whose title is not a category at all.
   const idByPageId = new Map();
 
   await streamInsertRows(paths.page, (table, v) => {
@@ -288,6 +359,7 @@ export async function ingest(overrides = {}) {
   INGEST_STATS.keptMembers = db.prepare('SELECT COUNT(*) AS n FROM member').get().n;
 
   finalizeIndexes(db);
+  assertIndexes(db);
 
   // --- Fail loudly on catastrophic row loss ---------------------------------
   //
@@ -296,10 +368,12 @@ export async function ingest(overrides = {}) {
   // number is logged whether or not it is acceptable, because a run that lands
   // just above the floor is the one worth looking at.
   //
-  // The guard measures the join alone. Categories dropped by the meta filter
-  // are reported separately rather than folded in: on the real dumps they are
-  // 29% of all rows, so counting them as join failures would abort every
-  // correct run and teach the operator to ignore the guard.
+  // The guard measures the join alone. Nothing about the meta filter enters
+  // the denominator any more, because nothing is filtered at this point: every
+  // resolvable target is kept, and `keptTargets` is now `resolvedTargets` less
+  // the handful of links pointing at categories the dumps do not carry. An
+  // earlier version folded meta-filtered targets into the rate and needed a
+  // separate counter to stay honest; that hazard is gone with the filter.
   //
   // Two floors, not one. The rate above only proves the join worked; it says
   // nothing about whether either output is non-empty, and a run can clear it
@@ -313,8 +387,9 @@ export async function ingest(overrides = {}) {
   INGEST_STATS.targetResolution = rate;
   console.log(`cl_target_id -> lt_title resolution: ${resolvedTargets}/${linkRows} (${(rate * 100).toFixed(2)}%)`);
   if (linkRows > 0) {
-    console.log(`meta filter kept ${keptTargets}/${linkRows} targets (${(100 * keptTargets / linkRows).toFixed(2)}% of links)`);
+    console.log(`targets written: ${keptTargets}/${linkRows} (${(100 * keptTargets / linkRows).toFixed(2)}% of links)`);
   }
+  console.log(`categories written: ${INGEST_STATS.insertedCategories} of ${rawCategories} rows read (meta filter runs later, in prune)`);
   // Printed unconditionally: with keptParents at 0 this is the line that tells
   // an operator whether the dump had no 'subcat' rows at all (a dead branch)
   // or had them and something discarded every one (a real bug). The two are
