@@ -3,8 +3,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import {
-  applyMetaFilter, selectPrimaryParents, breakCycles, capDepth,
-  rankAndCut, assertAcyclic, assignDepth,
+  markMetaRemoved, spliceRemovedNodes, compactSurvivors, selectPrimaryParents,
+  breakCycles, capDepth, rankAndCut, assertAcyclic, assignDepth, reachWeightedPages,
 } from './lib/prune.mjs';
 import { MAINTENANCE_PATTERNS } from './lib/categories.mjs';
 import { buildConceptsFile, buildCrosslinksFile, buildMeta } from './lib/emit.mjs';
@@ -23,6 +23,10 @@ export const DEFAULT_PARAMS = {
   crosslinkGlobalCap: 400_000,
   crosslinkMemberSample: 200,
   metaFilterPatterns: MAINTENANCE_PATTERNS,
+  // Hops up the parent graph when measuring a category's reach weight. Six was
+  // chosen by measurement: all 30 broad fields land inside the 30k cut (ranks
+  // 137-13,776) and the whole pass runs in ~6s. See `reachWeightedPages`.
+  reachHopLimit: 6,
 };
 
 const VERSION = '1';
@@ -31,22 +35,36 @@ const VERSION = '1';
  * Run the five pruning passes over the SQLite graph and emit dense-indexed
  * nodes. Returns a map from SQLite cat.id to dense node index so cross-link
  * edges can be remapped into the same space.
+ *
+ * The graph on disk is COMPLETE: ingest writes every ns-14 category and every
+ * subcategory edge between them, and the meta filter runs here, at pass 1,
+ * where it can see that graph. That ordering is the whole point — a filter
+ * applied at insert time could only delete rows, and deleting the row of a
+ * category that other categories hang from promotes those children to roots
+ * instead of moving them up one level.
  */
 export function pruneToNodes(db, params) {
-  const rows = db.prepare('SELECT id, name FROM cat ORDER BY name').all();
-  const keptNames = new Set(applyMetaFilter(rows.map(r => r.name)));
-
+  // The full category table, streamed rather than materialised. `.all()` on
+  // 2.65M rows would hold every row object, every name and the ordered copy all
+  // at once; iterating lets each row be collected into three flat structures
+  // and dropped. `ORDER BY name` is kept so node order here matches the order
+  // `rankAndCut` breaks ties in, whatever the ids in the table happen to be.
+  const allNames = [];
+  const allIds = [];
+  const allPages = [];
   const dbIndex = new Map();
-  const names = [];
-  const ids = [];
-  rows.forEach(r => {
-    if (!keptNames.has(r.name)) return;
-    dbIndex.set(r.id, dbIndex.size);
-    names.push(r.name);
-    ids.push(r.id);
-  });
-  const nodeCount = dbIndex.size;
-  const afterMetaFilter = nodeCount;
+  let rawCategories = 0;
+  for (const r of db.prepare('SELECT id, name, cat_pages FROM cat ORDER BY name').iterate()) {
+    dbIndex.set(r.id, rawCategories);
+    allNames.push(r.name);
+    allIds.push(r.id);
+    allPages.push(Number(r.cat_pages) || 0);
+    rawCategories++;
+  }
+  const nodeCount = rawCategories;
+
+  // --- Pass 1: the meta filter, marked against the finished graph ------------
+  const removed = markMetaRemoved(allNames);
 
   const parentsByChild = Array.from({ length: nodeCount }, () => []);
   for (const e of db.prepare('SELECT child, parent FROM parent').all()) {
@@ -57,33 +75,70 @@ export function pruneToNodes(db, params) {
   }
 
   // cat_pages is MediaWiki's authoritative article count (see Task 3). Counting
-  // member rows undercounts badly because member only holds meta-filtered rows.
-  const articleCount = new Int32Array(nodeCount);
-  for (const r of db.prepare('SELECT id, cat_pages FROM cat').all()) {
-    const i = dbIndex.get(r.id);
-    if (i !== undefined) articleCount[i] = r.cat_pages;
-  }
-
-  // Pass 2
+  // member rows instead would be wrong twice over: it undercounts, and it is
+  // now measuring over the unfiltered member table.
+  //
+  // Pass 2. Runs on the FULL graph, maintenance scaffolding included, so the
+  // subtree sizes that decide each node's primary parent are the sizes a node
+  // really has on Wikipedia. The splice that follows is what removes the
+  // maintenance nodes; by then each surviving node has exactly one parent and
+  // the upward walk is unambiguous.
   const { primary, demoted } = selectPrimaryParents(parentsByChild, nodeCount);
   const parentOf = breakCycles(primary, demoted, nodeCount);
 
-  // Pass 3
-  const capped = capDepth(parentOf, nodeCount, params.maxDepth);
+  // Pass 1's second half: every survivor is re-parented onto its nearest
+  // surviving ancestor, so a removed node hands its children to its own parent
+  // instead of stranding them. Nothing below this line ever sees a removed node
+  // as a parent.
+  const spliced = spliceRemovedNodes(parentOf, removed, nodeCount);
 
-  // Passes 4 and 5
-  const depthBeforeCut = assignDepth(capped.parentOf, nodeCount);
-  const { kept, restoredCount } = rankAndCut(
-    capped.parentOf, depthBeforeCut, articleCount, nodeCount, params.nodeTarget,
+  // The rank weight, computed on the FULL graph while `parentsByChild` still
+  // holds every parent edge. Pass 2 is about to keep one parent per node and
+  // throw the rest away, and 58.7% of nodes are multi-parented, so the multi-
+  // parent structure has to be measured before it is discarded — not after.
+  const reachOnFull = reachWeightedPages(
+    parentsByChild, allPages, nodeCount, params.reachHopLimit ?? 6,
   );
 
-  const remap = new Int32Array(nodeCount).fill(-1);
+  // Compact to survivors and release the full-graph structures before the
+  // remaining passes, which then run at exactly the size they used to.
+  const { remap, original, names, count: afterMetaFilter } = compactSurvivors(allNames, removed);
+  const survivorParent = new Int32Array(afterMetaFilter);
+  const survivorPages = new Int32Array(afterMetaFilter);
+  const survivorReach = new Float64Array(afterMetaFilter);
+  for (let i = 0; i < nodeCount; i++) {
+    const s = remap[i];
+    if (s < 0) continue;
+    const parent = spliced[i];
+    // A survivor's parent is either another survivor or -1 by construction;
+    // anything else means the splice handed back a node it removed.
+    survivorParent[s] = parent === -1 ? -1 : remap[parent];
+    if (parent !== -1 && survivorParent[s] < 0) {
+      throw new Error(`node ${names[s]} was spliced onto removed node ${parent}`);
+    }
+    survivorPages[s] = allPages[i];
+    survivorReach[s] = reachOnFull[i];
+  }
+  parentsByChild.length = 0;
+  dbIndex.clear();
+
+  // Pass 3
+  const capped = capDepth(survivorParent, afterMetaFilter, params.maxDepth);
+
+  // Passes 4 and 5
+  const depthBeforeCut = assignDepth(capped.parentOf, afterMetaFilter);
+  const { kept, restoredCount } = rankAndCut(
+    capped.parentOf, depthBeforeCut, survivorPages, afterMetaFilter, params.nodeTarget,
+    survivorReach,
+  );
+
+  const localToDense = new Int32Array(afterMetaFilter).fill(-1);
   const sqliteToDense = new Map();
   const order = [];
-  for (let i = 0; i < nodeCount; i++) {
+  for (let i = 0; i < afterMetaFilter; i++) {
     if (!kept[i]) continue;
-    remap[i] = order.length;
-    sqliteToDense.set(ids[i], order.length);
+    localToDense[i] = order.length;
+    sqliteToDense.set(allIds[original[i]], order.length);
     order.push(i);
   }
 
@@ -94,9 +149,9 @@ export function pruneToNodes(db, params) {
   const nodes = order.map(i => ({
     id: slugify(names[i]),
     name: names[i],
-    parent: capped.parentOf[i] === -1 ? -1 : (remap[capped.parentOf[i]] ?? -1),
+    parent: capped.parentOf[i] === -1 ? -1 : (localToDense[capped.parentOf[i]] ?? -1),
     depth: depthBeforeCut[i],
-    articleCount: articleCount[i],
+    articleCount: survivorPages[i],
     aliases: [],
   }));
 
@@ -106,7 +161,7 @@ export function pruneToNodes(db, params) {
     nodes,
     sqliteToDense,
     counts: {
-      rawCategories: rows.length,
+      rawCategories,
       afterMetaFilter,
       afterDepthCap: capped.removedCount,
       finalNodes: nodes.length,
@@ -135,17 +190,25 @@ export async function buildAll({
   }
 
   const db = new Database(dbPath, { readonly: true });
+  const stage = (label) => {
+    const started = Date.now();
+    return (done) => console.log(`  [${((Date.now() - started) / 1000).toFixed(1)}s] ${label}${done ? ` — ${done}` : ''}`);
+  };
+
+  let tick = stage('load graph');
   const { nodes, sqliteToDense, counts } = pruneToNodes(db, finalParams);
+  tick(`${counts.rawCategories.toLocaleString()} categories -> ${counts.finalNodes.toLocaleString()} nodes`);
   db.close();
 
+  tick = stage('cross-links');
   // Cross-links are computed in SQLite cat.id space; remap into dense space.
   // Edges whose endpoint was pruned are dropped here, at build time, and
   // counted. They must never reach the artifact for a user to click.
   //
   // `keptIds` restricts the candidate set to the nodes the rank cut actually
-  // kept. Without it the sample would cover all ~2.35M post-filter
-  // categories (~470M member rows) to produce edges that are then dropped at
-  // remap time — the kept set is a strict superset of what can appear in the
+  // kept. Without it the sample would cover all ~2.4M surviving categories
+  // (~470M member rows) to produce edges that are then dropped at remap
+  // time — the kept set is a strict superset of what can appear in the
   // artifact, so nothing reachable is lost.
   const edges = [];
   const seen = new Set();
@@ -160,7 +223,8 @@ export async function buildAll({
     seen.add(key);
     edges.push({ a: lo, b: hi, shared: e.shared });
   }
-  edges.sort((x, y) => (x.a - x.a) || (x.b - y.b));
+  edges.sort((x, y) => (x.a - y.a) || (x.b - y.b));
+  tick(`${edges.length.toLocaleString()} edges${dangling ? ` (${dangling} dangling dropped)` : ''}`);
   if (dangling) console.warn(`  ${dangling} cross-link edge(s) dropped: endpoint was pruned`);
 
   const concepts = buildConceptsFile(nodes, null, version);
@@ -170,6 +234,7 @@ export async function buildAll({
   const hash = layoutInputHash(nodes);
   const hashPath = resolve(outDir, 'layout.hash');
   const binPath = resolve(outDir, 'layout.bin');
+  tick = stage('force layout');
   let layoutBuffer;
   if (existsSync(hashPath) && existsSync(binPath)
       && readFileSync(hashPath, 'utf8').trim() === hash) {
@@ -177,12 +242,14 @@ export async function buildAll({
     layoutBuffer = cached.buffer.slice(
       cached.byteOffset, cached.byteOffset + cached.byteLength,
     );
-    console.log('  layout.bin unchanged, reusing cached positions');
+    tick('reused cached positions');
   } else {
     layoutBuffer = packLayout(computePositions(nodes), nodes, edges);
     writeFileSync(hashPath, hash);
+    tick('computed');
   }
 
+  tick = stage('write artifacts');
   const meta = buildMeta(
     { ...counts, crosslinks: edges.length, danglingCrosslinks: dangling },
     finalParams, null, version, generatedAt,
@@ -194,6 +261,7 @@ export async function buildAll({
   write('crosslinks.json', JSON.stringify(crosslinks));
   write('layout.bin', Buffer.from(layoutBuffer));
   write('meta.json', JSON.stringify(meta, null, 2));
+  tick(Object.keys(files).join(', '));
 
   return { files, concepts, crosslinks, layoutBuffer, meta, nodes };
 }

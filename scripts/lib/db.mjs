@@ -66,9 +66,23 @@ export function assignStableIds(db) {
   db.exec('PRAGMA foreign_keys = ON');
 }
 
+/**
+ * The indexes `finalizeIndexes` must leave behind, in creation order. Exported
+ * so ingest can assert they exist rather than assume it: a database with no
+ * indexes still produces a correct atlas, just 12x slower to build, so nothing
+ * else would ever notice.
+ */
+export const REQUIRED_INDEXES = [
+  'idx_parent_child',
+  'idx_parent_parent',
+  'idx_member_cat',
+  'idx_member_article',
+];
+
 export function finalizeIndexes(db) {
-  db.exec('CREATE INDEX IF NOT EXISTS idx_parent_child ON parent(child)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_parent_parent ON parent(parent)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_member_cat ON member(cat)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_member_article ON member(article)');
+  for (const name of REQUIRED_INDEXES) {
+    const table = name.startsWith('idx_parent') ? 'parent' : 'member';
+    const column = name.replace(/^idx_(parent|member)_/, '');
+    db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${table}(${column})`);
+  }
 }

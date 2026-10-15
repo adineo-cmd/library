@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   capDepth, rankAndCut, assertAcyclic,
-  selectPrimaryParents, breakCycles, assignDepth,
+  selectPrimaryParents, breakCycles, assignDepth, subtreePages,
 } from '../prune.mjs';
 
 describe('capDepth', () => {
@@ -50,58 +50,75 @@ describe('capDepth', () => {
 });
 
 describe('rankAndCut', () => {
-  it('keeps the top N by articleCount', () => {
-    // counts 10, 90, 50, 20 -> keep 2: index 1 (90) and index 2 (50).
-    // Node 0 is then restored as the shared parent of both kept nodes, so the
-    // final kept set is {0, 1, 2}. (The plan's draft of this test expected
-    // [1,0,1,0], which cuts the highest-count node and keeps the lowest — it
-    // contradicts the test's own comment, the restore test below, and spec
-    // 5.6. [1,1,1,0] is the only reading consistent with all three.)
+  // Ranking is on SUBTREE totals, so a trunk outranks its own descendants:
+  // node 0 sums 10+90+50+20 = 170 against node 1's 90, so the top 2 are node 0
+  // and node 1. Node 0 is kept outright and nothing needs restoring.
+  it('keeps the top N by subtree article count', () => {
     const { kept, restoredCount } = rankAndCut(
       Int32Array.from([-1, 0, 0, 0]), Int32Array.from([0, 1, 1, 1]), [10, 90, 50, 20], 4, 2,
     );
-    expect(Array.from(kept)).toEqual([1, 1, 1, 0]);
-    expect(restoredCount).toBe(1);
+    expect(Array.from(kept)).toEqual([1, 1, 0, 0]);
+    expect(restoredCount).toBe(0);
   });
-  it('restores ancestors needed to keep a kept node reachable', () => {
-    const { kept, restoredCount } = rankAndCut(
-      Int32Array.from([-1, 0, 1, 2]), Int32Array.from([0, 1, 2, 3]), [1, 2, 3, 9999], 4, 1,
+
+  // The direct-count ranking this replaced kept only index 1 (90) and index 2
+  // (50) and needed node 0 restored as their shared parent. On subtree totals
+  // node 0 already ranks first, so the trunk no longer depends on restoration
+  // to exist at all.
+  it('ranks a trunk above its descendants on subtree count', () => {
+    const { kept } = rankAndCut(
+      Int32Array.from([-1, 0, 0, 0]), Int32Array.from([0, 1, 1, 1]), [0, 1, 1, 1], 4, 1,
     );
-    expect(Array.from(kept)).toEqual([1, 1, 1, 1]);
-    expect(restoredCount).toBe(3);
+    expect(Array.from(kept)).toEqual([1, 0, 0, 0]);
+  });
+
+  // Subtree ranking makes a parent's total >= its child's, so a parent almost
+  // always wins its own slot and restoration has nothing to do. It still
+  // matters on an exact tie, where the lower index wins the cut and an
+  // ancestor can be excluded: here node 1 owns no pages of its own and has a
+  // single child, so both total 50 and node 0 takes the only slot. Node 1 is
+  // the parent of a kept node, so it comes back and the kept node stays
+  // reachable from a root.
+  it('restores an ancestor that lost a subtree tie', () => {
+    const { kept, restoredCount } = rankAndCut(
+      Int32Array.from([1, -1]), Int32Array.from([1, 0]), [50, 0], 2, 1,
+    );
+    expect(Array.from(kept)).toEqual([1, 1]);
+    expect(restoredCount).toBe(1);
   });
 
   // The load-bearing case from the real dump: every broad field has a tiny
-  // direct article count (Physics 42, Mathematics 33) because content lives in
-  // subcategories, and the 30k cut sits at ~304 pages. A trunk survives only
-  // because a high-count descendant pulls it back — here node 0 is reachable
-  // from the kept set only through node 2, and has no other kept descendant.
-  it('restores a low-count trunk reachable only through a high-count descendant', () => {
+  // direct article count (Philosophy 25, Physics 42) because content lives in
+  // subcategories, and the cut sits at ~304 pages. Measured on the real dump,
+  // direct counts cleared it for 1 of 30 fields and subtree totals for 30 of 30.
+  // This is the shape that failed: a trunk with almost no pages of its own.
+  it('keeps a trunk whose pages all live in its descendants', () => {
+    // Node 0 holds 5 pages directly but its subtree holds 5+10+9999.
     const { kept, restoredCount } = rankAndCut(
       Int32Array.from([-1, 0, 1]), Int32Array.from([0, 1, 2]), [5, 10, 9999], 3, 1,
     );
-    expect(Array.from(kept)).toEqual([1, 1, 1]);
-    expect(kept[0]).toBe(1);
-    expect(restoredCount).toBe(2);
+    expect(Array.from(kept)).toEqual([1, 0, 0]);
+    expect(restoredCount).toBe(0);
   });
 
   // Restoration walks ANCESTORS only. A kept node's siblings, cousins and
   // descendants are not pulled in just because they share a neighbourhood.
+  // Node 0 is kept; its parent node 1 comes back, while node 2 (sibling) and
+  // node 3 (child) stay cut even though node 3 is on the path to a root.
   it('restores only the ancestor chain, not siblings or descendants', () => {
-    // 0 -> 1, 0 -> 2, 2 -> 3. Keep node 2 only: node 0 comes back as its
-    // parent; node 1 (sibling) and node 3 (child) stay cut.
     const { kept, restoredCount } = rankAndCut(
-      Int32Array.from([-1, 0, 0, 2]), Int32Array.from([0, 1, 1, 2]), [1, 2, 9999, 5], 4, 1,
+      Int32Array.from([1, -1, 1, 0]), Int32Array.from([1, 0, 1, 2]), [50, 0, 0, 5], 4, 1,
     );
-    expect(Array.from(kept)).toEqual([1, 0, 1, 0]);
+    expect(Array.from(kept)).toEqual([1, 1, 0, 0]);
     expect(restoredCount).toBe(1);
   });
 
-  // The sort is total: equal counts fall back to the lower index, so the cut
-  // is deterministic and independent of input order.
-  it('breaks an articleCount tie on the lower index', () => {
+  // The sort is total: equal totals fall back to the lower index, so the cut
+  // is deterministic and independent of input order. Nodes 1 and 2 both
+  // total 50; node 0 totals 100 and takes the only slot at target 1.
+  it('breaks a subtree articleCount tie on the lower index', () => {
     const { kept } = rankAndCut(
-      Int32Array.from([-1, 0, 0]), Int32Array.from([0, 1, 1]), [50, 50, 10], 3, 1,
+      Int32Array.from([-1, 0, 0]), Int32Array.from([0, 1, 1]), [0, 50, 50], 3, 1,
     );
     expect(Array.from(kept)).toEqual([1, 0, 0]);
   });
@@ -112,6 +129,40 @@ describe('rankAndCut', () => {
     );
     expect(Array.from(kept)).toEqual([0, 1, 1]);
     expect(restoredCount).toBe(0);
+  });
+});
+
+describe('subtreePages', () => {
+  it('sums each node with its descendants', () => {
+    expect(Array.from(subtreePages(
+      Int32Array.from([-1, 0, 1]), [5, 10, 20], 3,
+    ))).toEqual([35, 30, 20]);
+  });
+
+  // A trunk is mostly its descendants' pages, which is the whole point: the
+  // real fields hold 17-181 pages directly and hundreds of thousands below.
+  it('attributes a trunk to the content beneath it', () => {
+    const total = subtreePages(Int32Array.from([-1, 0]), [25, 373198], 2);
+    expect(total[0]).toBe(373223);
+    expect(total[1]).toBe(373198);
+  });
+
+  // Several parent edges may reach the same node (Wikipedia categories are
+  // many-parented; pass 2 picks one primary, but this must not assume it).
+  // The node contributes once, and the sum is never larger than the input.
+  it('counts a multiply-reached node once', () => {
+    const total = subtreePages(Int32Array.from([-1, 0, 0]), [0, 0, 7], 3);
+    expect(total[0]).toBe(7);
+  });
+
+  it('handles a forest with several roots', () => {
+    expect(Array.from(subtreePages(
+      Int32Array.from([-1, -1, 1]), [1, 2, 3], 3,
+    ))).toEqual([1, 5, 3]);
+  });
+
+  it('treats an isolated root as its own subtree', () => {
+    expect(Array.from(subtreePages(Int32Array.from([-1]), [42], 1))).toEqual([42]);
   });
 });
 
@@ -168,16 +219,20 @@ describe('prune pipeline end to end', () => {
     expect(capped[6]).toBe(4);
     expect(Array.from(depth).every(d => d >= 0 && d <= 5)).toBe(true);
 
+    // Subtree totals after the depth cap: node 6 (900) was re-parented to
+    // node 4, so the totals roll up 0 (2082) > 1 (2077) > 2 (2060) > 4 (910)
+    // > 7 (1100 -> actually 7's own 800 + node 8's 300). Top 3 are the three
+    // trunk nodes, and each one's whole chain is already in the kept set, so
+    // restoration has nothing left to do.
     const { kept, restoredCount } = rankAndCut(capped, depth, articleCount, 9, 3);
+    expect(Array.from(kept)).toEqual([1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    expect(restoredCount).toBe(0);
 
-    // Top 3 by count: 6 (900), 7 (800), 8 (300). Restoration pulls the whole
-    // chain 0-4 back for node 6; node 5 (count 4) stays cut.
-    expect(restoredCount).toBe(5);
-    expect(Array.from(kept)).toEqual([1, 1, 1, 1, 1, 0, 1, 1, 1]);
-
-    // The trunk — node 0, count 5, far below the cut — survives only because
-    // a high-count descendant needed it for reachability.
-    expect(kept[0]).toBe(1);
+    // On direct counts this same fixture kept 6, 7 and 8 (900/800/300) and
+    // needed five ancestors restored to reach a root. That is the failure mode
+    // subtree ranking removes: the trunk is kept on its own merit, so the atlas
+    // is navigable from the top instead of hanging off whichever leaf happened
+    // to hold the most articles.
 
     // The kept subset is a sub-forest of an acyclic forest: every kept node
     // with a kept parent still reaches a root, so no cycle can appear.

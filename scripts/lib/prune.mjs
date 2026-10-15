@@ -1,13 +1,16 @@
 import { isMaintenanceCategory } from './categories.mjs';
 
 /**
- * Pass 1 — the meta filter. Drops Wikipedia's maintenance scaffolding
- * (stub/citation-tag/WikiProject/namespace clutter) and names that are a bare
- * period rather than a subject, so `CS1 references` and `1990s` go while
- * `Films of 1999` stays.
+ * Pass 1 — the meta filter, as a NAME PREDICATE. Drops Wikipedia's maintenance
+ * scaffolding (stub/citation-tag/WikiProject/namespace clutter) and names that
+ * are a bare period rather than a subject, so `CS1 references` and `1990s` go
+ * while `Films of 1999` stays.
  *
- * Needs no graph structure, so it runs first, on the raw name list, before any
- * parent/child relationship exists.
+ * Needs no graph structure, so it is the cheapest way to ask the question, and
+ * it stays exported for callers that only hold names. It is NOT how the build
+ * applies the filter any more: that is `markMetaRemoved` + `spliceRemovedNodes`
+ * below, because a filter that can only remove rows cannot remove a node
+ * without orphaning its children. See the comment on `markMetaRemoved`.
  *
  * `names` must already be normalised by `normalizeCategoryName`; this only
  * gates and never rewrites. A padded name is judged on its trimmed value —
@@ -15,7 +18,7 @@ import { isMaintenanceCategory } from './categories.mjs';
  * `" CS1 x"` through — but the original element is what gets returned.
  *
  * A pure subset of its input: order preserved, no dedup, no mutation, one
- * linear scan. Safe over the full ~2.6M-row category table.
+ * linear scan. Safe over the full ~2.65M-row category table.
  */
 export function applyMetaFilter(names) {
   return names.filter(name => {
@@ -25,8 +28,117 @@ export function applyMetaFilter(names) {
 }
 
 /**
+ * Pass 1 — the meta filter, as a GRAPH-TIME marking. Returns a `Uint8Array`
+ * of removal flags indexed like `names`: `removed[i]` is 1 when node `i` is
+ * maintenance scaffolding or has no usable name, and must not appear in the
+ * atlas.
+ *
+ * This replaces filtering at insert time, which was an architectural defect
+ * rather than a shortcut. Filtering rows as they were written meant `cat` and
+ * `parent` were built already pruned, so a category whose parent was filtered
+ * away never received a parent edge at all — the edge was written only if the
+ * child resolved in a map that held survivors only. Measured on the real dumps
+ * that left 1,061,927 of 2,481,394 categories (42.8%) with no parent row and
+ * promoted the stumps to roots, which is where 18.1% maintenance roots came
+ * from. It also made broad fields unrestorable: pass 5 pulls back the ancestors
+ * of kept nodes, but it can only walk edges that exist.
+ *
+ * Nothing is deleted here. A flag is a statement about a node, not an action on
+ * the graph; `spliceRemovedNodes` is what turns the flags into a forest.
+ *
+ * A padded name is judged on its trimmed value, for the same reason
+ * `applyMetaFilter` trims: the maintenance rules are `^`-anchored.
+ */
+export function markMetaRemoved(names) {
+  const removed = new Uint8Array(names.length);
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    // A non-string can only arrive from a caller that skipped normalisation;
+    // treat it as unusable rather than letting it throw mid-build.
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (trimmed.length === 0 || isMaintenanceCategory(trimmed)) removed[i] = 1;
+  }
+  return removed;
+}
+
+/**
+ * The splice. Given a forest — one parent per node, from `breakCycles` — and
+ * the flags from `markMetaRemoved`, re-parent every surviving node onto its
+ * NEAREST SURVIVING ANCESTOR and return a new parent array. `removed` nodes are
+ * left with whatever parent they had; the caller drops them by index, and this
+ * function never hands back a reference to one.
+ *
+ * Walking up with a skip loop, not deleting removed nodes in depth order. The
+ * ordering approach is subtly wrong exactly when it is most needed: when a chain
+ * of removed nodes sits next to a surviving one, a depth-ordered deletion has
+ * already moved the survivor's parent pointer past the node it is about to
+ * delete, so the survivor keeps pointing at something that is gone. A single
+ * upward walk from each survivor has no such ordering to get wrong. It is also
+ * cheap: the walk is bounded by chain depth (~41 on the real dumps), so this is
+ * O(V * depth) with no allocation per node.
+ *
+ * The input is copied, so the caller's array is never mutated. That matters
+ * here specifically: the walk reads `next[node]` for REMOVED nodes as it climbs,
+ * and those entries must still hold their original parents. Only surviving
+ * nodes are rewritten, and a walk never reads a surviving node's entry — it
+ * stops there — so rewriting in place would also be safe, but copying costs one
+ * allocation and removes the question.
+ *
+ * Every ancestor chain here terminates: `breakCycles` guarantees the input is a
+ * forest. The step counter is a backstop against that guarantee being broken
+ * upstream, and it fails loudly rather than looping for the length of a cycle.
+ */
+export function spliceRemovedNodes(parentOf, removed, nodeCount) {
+  const next = Int32Array.from(parentOf);
+  for (let i = 0; i < nodeCount; i++) {
+    if (removed[i]) continue;
+    let node = next[i];
+    let steps = 0;
+    while (node !== -1 && removed[node]) {
+      node = next[node];
+      // A forest has no cycles, so `steps` can only reach nodeCount if the
+      // input was not one. Fail here rather than hang later in layout.
+      if (++steps > nodeCount) {
+        throw new Error(
+          `splice did not terminate at node ${i}: its parent chain cycles through removed nodes`,
+        );
+      }
+    }
+    next[i] = node;
+  }
+  return next;
+}
+
+/**
+ * The survivors of a splice, as a dense remap.
+ *
+ * `remap` goes the way the graph needs it — original index to surviving index,
+ * -1 for a removed node — because that is the direction every edge is
+ * translated in. `original` is the inverse, surviving index to original index,
+ * for the one thing that still has to speak the old language: mapping a kept
+ * node back to its `cat.id` so cross-link edges can be remapped.
+ *
+ * `names` holds the surviving names, indexed by surviving index. Survivors come
+ * out in ascending original index, so the ordering depends on nothing but the
+ * input — the same property `rankAndCut`'s tie-break relies on.
+ */
+export function compactSurvivors(names, removed) {
+  const remap = new Int32Array(names.length).fill(-1);
+  const keptNames = [];
+  const original = [];
+  let next = 0;
+  for (let i = 0; i < names.length; i++) {
+    if (removed[i]) continue;
+    remap[i] = next++;
+    original.push(i);
+    keptNames.push(names[i]);
+  }
+  return { remap, original, names: keptNames, count: next };
+}
+
+/**
  * Pass 2 turns the category DAG into a forest. It runs over the full
- * post-filter set (~2.5M nodes, ~5M edges), so every traversal below is
+ * post-splice set (~2.4M nodes, ~4M edges), so every traversal below is
  * O(V+E), iterative, and built on flat typed arrays: one array-of-arrays per
  * node costs ~100 bytes of header alone, which at this size is hundreds of
  * megabytes of pure overhead.
@@ -360,6 +472,130 @@ export function capDepth(parentOf, nodeCount, maxDepth) {
 }
 
 /**
+ * A node's rank weight: the total `articleCount` of every category that can
+ * reach it walking parents, propagating at most `hopLimit` levels up, each
+ * source counted once per target.
+ *
+ * This measures how much Wikipedia content a node *represents*, which is what a
+ * rank cut needs, and it is deliberately NOT the tree subtree. Pass 2 keeps one
+ * parent per node and 58.7% of the 2.65M categories are multi-parented, so 60%
+ * of the 6.6M edges are discarded and tree subtrees are 100-1000x smaller than
+ * the real reach: measured on the real dump, `Physics` has 809,817 pages of
+ * reach but 220 in-tree, and every broad field ranks far below the 30k cut on
+ * the tree measure (14/30 kept) while all 30 clear it here.
+ *
+ * `hopLimit` is what makes this affordable. Unbounded reach propagation is a
+ * transitive closure: measured, it did not finish 2.65M nodes and 6.6M edges
+ * inside two minutes. Naive path-counting instead of visit-stamped
+ * deduplication over the *cyclic* raw DAG explodes combinatorially — it scored
+ * `Physics` at 4.2e21 — so the hop bound is load-bearing for magnitude as well
+ * as time: weight <= pages x hopLimit x degree, no blowup. At hopLimit 6 the
+ * full graph computes in ~6s.
+ *
+ * Six hops is a judgment call, chosen by measurement: it puts all 30 broad
+ * fields inside the top 30,000 (ranks 137-13,776) while Wikipedia's
+ * housekeeping categories — the ones the meta filter removes — sit at ranks
+ * 1-9 by raw weight and are caught by name. The hop limit only affects
+ * *how much* weight a node accrues, not which nodes it is related to, so the
+ * ranking is stable for any limit in this range.
+ *
+ * `parentsByChild` is the full post-splice parent lists; `hopLimit` is the
+ * propagation depth. Cyclic parent references are safe: `stamp` marks a target
+ * visited for the current source, so a cycle cannot loop.
+ */
+export function reachWeightedPages(parentsByChild, articleCount, nodeCount, hopLimit = 6) {
+  // Flat parent CSR. An array-of-arrays over 2.65M nodes is hundreds of MB of
+  // header alone; two Int32Arrays cost 8 bytes per edge.
+  const offsets = new Int32Array(nodeCount + 1);
+  for (let child = 0; child < nodeCount; child++) {
+    const parents = parentsByChild[child];
+    offsets[child + 1] = offsets[child] + (parents ? parents.length : 0);
+  }
+  const parents = new Int32Array(offsets[nodeCount]);
+  const cursor = Int32Array.from(offsets.subarray(0, nodeCount));
+  for (let child = 0; child < nodeCount; child++) {
+    const list = parentsByChild[child];
+    if (!list) continue;
+    for (let i = 0; i < list.length; i++) parents[cursor[child]++] = list[i];
+  }
+
+  const total = new Float64Array(nodeCount);
+  const stamp = new Int32Array(nodeCount).fill(-1);   // last source that reached me
+  const depth = new Uint8Array(nodeCount);            // hops from that source
+  const stack = new Int32Array(nodeCount);
+
+  for (let src = 0; src < nodeCount; src++) {
+    const weight = articleCount[src];
+    if (weight === 0) continue;
+    let top = 0;
+    stack[top++] = src;
+    stamp[src] = src;
+    depth[src] = 0;
+    while (top > 0) {
+      const node = stack[--top];
+      if (depth[node] >= hopLimit) continue;
+      for (let k = offsets[node]; k < offsets[node + 1]; k++) {
+        const parent = parents[k];
+        if (parent < 0 || parent >= nodeCount || stamp[parent] === src) continue;
+        stamp[parent] = src;
+        depth[parent] = depth[node] + 1;
+        total[parent] += weight;
+        if (top < stack.length) stack[top++] = parent;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Total `articleCount` in each node's subtree, in the forest `parentOf`
+ * describes — each node's own count plus every descendant's, counted once.
+ *
+ * Kept for the shape questions it answers (is the atlas a hub-and-spoke? does a
+ * subtree exist?) and as the tie-break under `rankAndCut`. It is NOT the rank
+ * weight — see `reachWeightedPages` for why the tree measure fails here.
+ *
+ * Linear, with two typed arrays of `nodeCount` and no adjacency lists. Every
+ * node folds into its parent exactly once, so the sum cannot double-count a
+ * node reachable by several parent edges. Requires the forest passes 1-3 have
+ * already produced (no cycles); on a cycle the affected nodes simply never
+ * reach `pending === 0` and keep their own count rather than inflating a
+ * neighbour.
+ */
+export function subtreePages(parentOf, articleCount, nodeCount) {
+  // Leaf-to-root accumulation over a queue of nodes whose children have all
+  // been folded in. This needs no child lists: one out-degree counter per node
+  // replaces an adjacency structure, and the graph is a forest (passes 1-3 ran
+  // first), so every node drains exactly once and every root drains last.
+  //
+  // An adjacency-list walk is the obvious alternative and is what this replaced:
+  // building one child array per node for ~2.5M nodes exhausted the heap
+  // (millions of empty arrays), and it still needed a second pass for
+  // component roots that index 0 cannot reach.
+  const total = Float64Array.from(articleCount);
+  const pending = new Int32Array(nodeCount);   // children still to fold in
+  for (let i = 0; i < nodeCount; i++) {
+    const p = parentOf[i];
+    if (p !== -1 && p !== i) pending[p]++;
+  }
+
+  // Reused as a queue; `head` advances, so it holds at most one entry per node.
+  const queue = new Int32Array(nodeCount);
+  let head = 0;
+  let tail = 0;
+  for (let i = 0; i < nodeCount; i++) if (pending[i] === 0) queue[tail++] = i;
+
+  while (head < tail) {
+    const node = queue[head++];
+    const p = parentOf[node];
+    if (p === -1 || p === node) continue;
+    total[p] += total[node];
+    if (--pending[p] === 0) queue[tail++] = p;
+  }
+  return total;
+}
+
+/**
  * Passes 4 and 5. Keep the top `target` nodes by `articleCount`, then pull
  * back every ancestor needed to make a kept node reachable from a root.
  *
@@ -368,23 +604,30 @@ export function capDepth(parentOf, nodeCount, maxDepth) {
  * rows, which only sees links that survived the meta filter and undercounts
  * badly on exactly the categories that matter.
  *
- * The sort is a total order (count descending, then index ascending), so the
- * cut is deterministic and independent of input order. Restoration walks up
- * from each kept node through unkept ancestors; each ancestor is counted once,
- * and because a restored ancestor is marked kept immediately, later walks stop
- * at it. Restored nodes are exempt from the `target` cap — that exemption is
- * the only mechanism by which low-count trunk categories (Physics at 42
- * pages, against a ~304-page cut) exist in the atlas at all.
+ * Ranking uses `rankWeight` when supplied — in production the reach weight from
+ * `reachWeightedPages`, which is what decides which categories the atlas is
+ * about — and otherwise each node's tree subtree total. It never ranks on the
+ * direct `cat_pages` alone: that selects leaves and discards every trunk node,
+ * the difference between a browsable tree and 30,000 disconnected leaves.
+ *
+ * The sort is a total order (weight descending, then direct count descending,
+ * then index ascending), so the cut is deterministic and independent of input
+ * order. Restoration walks up from each kept node through unkept ancestors;
+ * each ancestor is counted once, and because a restored ancestor is marked
+ * kept immediately, later walks stop at it. Restored nodes are exempt from the
+ * `target` cap — that exemption is the only mechanism by which an unranked
+ * trunk category reaches the atlas.
  *
  * Restoration only ever sets bits in `kept`; it never touches `parentOf`, so
  * it cannot reintroduce a self-parent or a cycle. Nodes the rank step cut
  * stay cut unless they lie on a kept node's ancestor chain — siblings,
  * cousins and descendants of a kept node are not pulled in.
  */
-export function rankAndCut(parentOf, depth, articleCount, nodeCount, target) {
+export function rankAndCut(parentOf, depth, articleCount, nodeCount, target, rankWeight) {
+  const weight = rankWeight ?? subtreePages(parentOf, articleCount, nodeCount);
   const order = Array.from({ length: nodeCount }, (_, i) => i)
     .filter(i => depth[i] >= 0)
-    .sort((a, b) => (articleCount[b] - articleCount[a]) || (a - b));
+    .sort((a, b) => (weight[b] - weight[a]) || (articleCount[b] - articleCount[a]) || (a - b));
 
   const kept = new Uint8Array(nodeCount);
   let keptCount = 0;
