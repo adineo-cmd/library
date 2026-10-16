@@ -15,6 +15,52 @@ describe('buildConceptsFile', () => {
   it('sets nodeCount from the array length', () => {
     expect(buildConceptsFile(nodes, '2026-08-05', '1').nodeCount).toBe(2);
   });
+
+  // `slugify` lowercases, and the real dump contains pairs that differ only in
+  // case or punctuation: `Asian Games`/`Asian games` and `Production
+  // (economics)`/`Production economics` both collapse to one id. The zod
+  // schema rejects the duplicate, which surfaced as the whole atlas failing to
+  // load in the browser — so the emitter, which alone sees every node, has to
+  // disambiguate.
+  it('gives colliding slugs distinct ids', () => {
+    const f = buildConceptsFile([
+      { id: undefined, name: 'Asian Games', parent: -1, depth: 0, articleCount: 5, aliases: [] },
+      { id: undefined, name: 'Asian games', parent: -1, depth: 0, articleCount: 4, aliases: [] },
+      { id: undefined, name: 'Production (economics)', parent: -1, depth: 0, articleCount: 3, aliases: [] },
+      { id: undefined, name: 'Production economics', parent: -1, depth: 0, articleCount: 2, aliases: [] },
+    ], '2026-08-05', '1');
+
+    expect(f.nodes.map(n => n.id)).toEqual([
+      'asian-games', 'asian-games-1', 'production-economics', 'production-economics-1',
+    ]);
+    // The names survive untouched; only the machine key is disambiguated.
+    expect(f.nodes.map(n => n.name)).toEqual([
+      'Asian Games', 'Asian games', 'Production (economics)', 'Production economics',
+    ]);
+    expect(() => loadConcepts(JSON.parse(JSON.stringify(f)))).not.toThrow();
+  });
+
+  // Three-way and non-adjacent collisions must all resolve, and the suffix has
+  // to stay stable for the same input order — the artifact is committed and a
+  // drifting id would rewrite every link to it.
+  it('disambiguates repeated and non-adjacent collisions deterministically', () => {
+    const mk = (name) => ({ id: undefined, name, parent: -1, depth: 0, articleCount: 1, aliases: [] });
+    const input = [mk('Foo'), mk('Bar'), mk('foo'), mk('Foo'), mk('bar')];
+    const first = buildConceptsFile(input, '2026-08-05', '1').nodes.map(n => n.id);
+    const second = buildConceptsFile(input, '2026-08-05', '1').nodes.map(n => n.id);
+    expect(first).toEqual(['foo', 'bar', 'foo-1', 'foo-2', 'bar-1']);
+    expect(second).toEqual(first);
+  });
+
+  // An explicit id still wins; it is only used when the slug is free, so a
+  // caller-supplied id is never silently rewritten.
+  it('keeps a caller-supplied id when it does not collide', () => {
+    const f = buildConceptsFile(
+      [{ id: 'physics', name: 'Physics', parent: -1, depth: 0, articleCount: 9, aliases: [] }],
+      '2026-08-05', '1',
+    );
+    expect(f.nodes[0].id).toBe('physics');
+  });
   it('uses compact parent indices, not id strings', () => {
     expect(buildConceptsFile(nodes, '2026-08-05', '1').nodes[1].parent).toBe(0);
   });

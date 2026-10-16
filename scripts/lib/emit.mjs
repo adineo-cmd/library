@@ -16,12 +16,35 @@ import { slugify } from './slug.mjs';
  * mis-compacted file fails the build loudly rather than corrupting silently.
  */
 export function buildConceptsFile(nodes, dumpDate, version) {
+  // `slugify` lowercases, so two categories whose names differ only in case
+  // collapse to the same id. Wikipedia really does contain both `Asian Games`
+  // and `Asian games`, and both `Production (economics)` and `Production
+  // economics`; the real dump produced two duplicate ids that the zod schema
+  // rejected, which failed the frontend at load time rather than at build time.
+  //
+  // Disambiguate here, at the emitter, because it is the only place that sees
+  // every node at once. The first claimant keeps the bare slug, so the common
+  // case stays clean and readable and only genuine collisions grow a suffix.
+  // Emission order is stable (the rank cut's order), so which node wins a bare
+  // slug is deterministic across runs rather than depending on iteration order.
+  const taken = new Map();
+  const uniqueId = (name, explicitId) => {
+    const base = explicitId ?? slugify(name);
+    const seen = taken.get(base);
+    if (seen === undefined) {
+      taken.set(base, 1);
+      return base;
+    }
+    taken.set(base, seen + 1);
+    return `${base}-${seen}`;
+  };
+
   return {
     version,
     dumpDate,
     nodeCount: nodes.length,
     nodes: nodes.map(n => ({
-      id: n.id ?? slugify(n.name),
+      id: uniqueId(n.name, n.id),
       name: n.name,
       parent: n.parent,
       depth: n.depth,

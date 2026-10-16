@@ -269,8 +269,14 @@ export async function buildAll({
 // Compared as resolved paths: import.meta.url percent-encodes, so a repo
 // path containing a space silently disables the entrypoint and the script
 // exits 0 having written nothing.
+//
+// Output goes to public/data/artifacts, not src/data/artifacts: Astro serves
+// and deploys everything under public/ verbatim, and src/ is invisible to the
+// site. Writing there instead meant every fetch of /data/artifacts/*.json 404s
+// and the pages hydrate into an error state. `npm run build` copies the
+// directory into dist/ with no extra step.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  buildAll({ outDir: resolve(ROOT, 'src/data/artifacts'), dbPath: resolve(ROOT, 'atlas-work/atlas.db') })
+  buildAll({ outDir: resolve(ROOT, 'public/data/artifacts'), dbPath: resolve(ROOT, 'atlas-work/atlas.db') })
     .then(({ meta, files }) => {
       console.log('artifacts written');
       console.table(meta.counts);
