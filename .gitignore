@@ -26,6 +26,12 @@ pnpm-debug.log*
 # ingest output
 atlas-work/
 
+# Generated artifacts. `npm run build:artifacts` writes ~4.7MB of JSON plus a
+# packed binary into public/data/artifacts, which is where Astro serves and
+# deploys it from. Regenerate rather than commit: the inputs (the Wikipedia
+# dump) are not in the repo either, so a committed copy goes stale silently.
+public/data/artifacts/
+
 # English Wikipedia SQL dumps. ingest.mjs prefers this directory whenever
 # enwiki-latest-page.sql.gz sits here, so the rule cannot live only in the
 # parent repo's .gitignore: they are 2.5 GB each and must never be committed.
