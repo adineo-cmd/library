@@ -1,97 +1,35 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
-import DomainExplorer from '../components/views/DomainExplorer.svelte';
+import DomainsMap from '../components/views/DomainsMap.svelte';
 ---
 
-<BaseLayout title="Domains" currentPage="domains">
-  <div class="page-container">
-    <div class="header-section">
-      <div class="eyebrain">Root System</div>
+<BaseLayout
+  title="Domains"
+  description="Every field branches from one curiosity — pick a trunk and the atlas fans out."
+  currentPage="domains"
+>
+  <div class="page">
+    <header class="intro">
+      <p class="eyebrow">Root System</p>
       <h1 class="page-title">Every field branches from one curiosity</h1>
       <p class="page-subtitle">
-        Pick a trunk — the atlas fans out into the domains, subdomains, and 
+        Pick a trunk — the atlas fans out into the domains, subdomains, and
         adjacent disciplines waiting to be explored.
       </p>
-    </div>
+    </header>
 
-    <div class="search-bar">
-      <span class="search-icon"></span>
-      <input type="text" id="domainSearch" placeholder="search domains, e.g. cartography, epistemics, mycology" />
-    </div>
-
-    <div class="tree-container">
-      <DomainExplorer client:only="svelte" />
-    </div>
+    <DomainsMap client:only="svelte" />
   </div>
 </BaseLayout>
 
 <style>
-  .page-container {
-    max-width: 1400px;
+  .page {
+    max-width: 1180px;
     margin: 0 auto;
-    padding: 60px 40px 80px;
-  }
-
-  .header-section {
-    margin-bottom: 40px;
-  }
-
-  .search-bar {
-    position: relative;
-    max-width: 600px;
-    margin: 0 auto;
-  }
-
-  .search-bar input {
-    width: 100%;
-    padding: 12px 12px 12px 40px;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 6px;
-    color: #e8e4d9;
-    font-family: 'Inter, sans-serif';
-    font-size: 14px;
-    outline: none;
-    transition: border-color 0.3s ease;
-  }
-
-  .search-bar input:focus {
-    border-color: #d4a574;
-  }
-
-  .search-bar input::placeholder {
-    color: #555555;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 16px;
-    height: 16px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23888888'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'/%3E%3C/svg%3E");
-    background-size: contain;
-    background-repeat: no-repeat;
-  }
-
-  .tree-container {
-    width: 100%;
-    height: 800px;
-    margin-top: 40px;
-    position: relative;
-    background: #0d0d0d; /* Enhances the root glow effect */
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid #1a1a1a;
+    padding: 56px 40px 72px;
   }
 
   @media (max-width: 768px) {
-    .page-container {
-      padding: 40px 20px 60px;
-    }
-    .tree-container {
-      height: 600px;
-    }
+    .page { padding: 36px 20px 56px; }
   }
 </style>

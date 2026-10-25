@@ -1,229 +1,35 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
-import GlobalGraph from '../components/views/GlobalGraph.svelte';
-
-// Mock data for the constellation graph
-const graphNodes = [
-  { id: '1', cluster: 'Sciences', size: 12 },
-  { id: '2', cluster: 'Sciences', size: 8 },
-  { id: '3', cluster: 'Sciences', size: 6 },
-  { id: '4', cluster: 'Humanities', size: 14 },
-  { id: '5', cluster: 'Humanities', size: 10 },
-  { id: '6', cluster: 'Humanities', size: 7 },
-  { id: '7', cluster: 'Formal Systems', size: 11 },
-  { id: '8', cluster: 'Formal Systems', size: 9 },
-  { id: '9', cluster: 'Arts', size: 13 },
-  { id: '10', cluster: 'Arts', size: 8 },
-  { id: '11', cluster: 'Applied', size: 15 },
-  { id: '12', cluster: 'Applied', size: 10 },
-  { id: '13', cluster: 'Applied', size: 6 },
-  { id: '14', cluster: 'Sciences', size: 5 },
-  { id: '15', cluster: 'Humanities', size: 9 },
-  { id: '16', cluster: 'Formal Systems', size: 7 },
-  { id: '17', cluster: 'Arts', size: 11 },
-  { id: '18', cluster: 'Applied', size: 8 },
-  { id: '19', cluster: 'Sciences', size: 10 },
-  { id: '20', cluster: 'Humanities', size: 6 },
-];
-
-const graphLinks = [
-  { source: '1', target: '2' }, { source: '1', target: '3' },
-  { source: '4', target: '5' }, { source: '4', target: '6' },
-  { source: '7', target: '8' }, { source: '9', target: '10' },
-  { source: '11', target: '12' }, { source: '11', target: '13' },
-  { source: '1', target: '4' }, { source: '4', target: '7' },
-  { source: '7', target: '9' }, { source: '9', target: '11' },
-  { source: '2', target: '5' }, { source: '5', target: '8' },
-  { source: '8', target: '10' }, { source: '10', target: '12' },
-  { source: '3', target: '14' }, { source: '6', target: '15' },
-  { source: '8', target: '16' }, { source: '10', target: '17' },
-  { source: '12', target: '18' }, { source: '1', target: '19' },
-  { source: '5', target: '20' }, { source: '19', target: '14' },
-  { source: '20', target: '15' }, { source: '16', target: '17' },
-  { source: '17', target: '18' }, { source: '18', target: '13' },
-  { source: '11', target: '1' }, { source: '9', target: '4' },
-];
-
-const clusters = [
-  { name: 'Sciences', color: '#2dd4bf' },
-  { name: 'Humanities', color: '#d4a574' },
-  { name: 'Formal Systems', color: '#60a5fa' },
-  { name: 'Arts', color: '#f87171' },
-  { name: 'Applied', color: '#a78bfa' },
-];
+import Constellation from '../components/views/Constellation.svelte';
 ---
 
-<BaseLayout title="Graph View" currentPage="graph">
-  <div class="page-container">
-    <div class="header-section">
-      <div class="eyebrow">Constellation</div>
+<BaseLayout
+  title="Graph View"
+  description="The whole atlas as a drifting constellation — every field a star, every relation a thread."
+  currentPage="graph"
+>
+  <div class="page">
+    <header class="intro">
+      <p class="eyebrow">Constellation</p>
       <h1 class="page-title">The whole atlas, drifting</h1>
       <p class="page-subtitle">
-        Every note a star, every link a thread of thought. Clusters cool and warm as ideas connect.
+        Every field a star, every link a thread of thought. Clusters glow by
+        trunk; drag, zoom, and click a star to isolate its neighbourhood.
       </p>
-    </div>
+    </header>
 
-    <div class="graph-layout">
-      <!-- Left Control Panel -->
-      <aside class="control-panel">
-        <h3 class="panel-title">Clusters</h3>
-        <ul class="cluster-list">
-          {clusters.map(cluster => (
-            <li class="cluster-item">
-              <span class="cluster-dot" style="background-color: {cluster.color}"></span>
-              {cluster.name}
-            </li>
-          ))}
-        </ul>
-
-        <div class="slider-group">
-          <label class="slider-label">Drift speed</label>
-          <input type="range" min="0" max="100" value="30" class="custom-slider">
-        </div>
-
-        <div class="slider-group">
-          <label class="slider-label">Link density</label>
-          <input type="range" min="0" max="100" value="50" class="custom-slider">
-        </div>
-      </aside>
-
-      <!-- Right Graph Canvas -->
-      <div class="graph-wrapper">
-        <GlobalGraph client:only="svelte" nodes={graphNodes} links={graphLinks} />
-        <div class="graph-hint">drag to nudge · scroll to zoom</div>
-      </div>
-    </div>
+    <Constellation client:only="svelte" />
   </div>
 </BaseLayout>
 
 <style>
-  .page-container {
+  .page {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 60px 40px 80px;
+    padding: 56px 40px 72px;
   }
 
-  .header-section {
-    margin-bottom: 40px;
-  }
-
-  .graph-layout {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 24px;
-    height: 700px;
-  }
-
-  .control-panel {
-    background: #0f0f0f;
-    border: 1px solid #1a1a1a;
-    border-radius: 12px;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-  }
-
-  .panel-title {
-    font-size: 10px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: #555555;
-    margin: 0;
-  }
-
-  .cluster-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .cluster-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 13px;
-    color: #888888;
-    padding-bottom: 16px;
-    border-bottom: 1px solid #1a1a1a;
-  }
-
-  .cluster-item:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-
-  .cluster-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-
-  .slider-group {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .slider-label {
-    font-size: 11px;
-    color: #555555;
-  }
-
-  .custom-slider {
-    -webkit-appearance: none;
-    width: 100%;
-    height: 4px;
-    background: #2a2a2a;
-    border-radius: 2px;
-    outline: none;
-  }
-
-  .custom-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #d4a574;
-    cursor: pointer;
-    border: 2px solid #0a0a0a;
-  }
-
-  .graph-wrapper {
-    position: relative;
-    background: #0f0f0f;
-    border: 1px solid #1a1a1a;
-    border-radius: 12px;
-    overflow: hidden;
-  }
-
-  .graph-hint {
-    position: absolute;
-    bottom: 20px;
-    left: 20px;
-    font-size: 11px;
-    color: #555555;
-    background: rgba(10, 10, 10, 0.8);
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid #1a1a1a;
-    pointer-events: none;
-  }
-
-  @media (max-width: 900px) {
-    .graph-layout {
-      grid-template-columns: 1fr;
-      height: auto;
-    }
-    .control-panel {
-      height: auto;
-    }
-    .graph-wrapper {
-      height: 500px;
-    }
+  @media (max-width: 768px) {
+    .page { padding: 36px 20px 56px; }
   }
 </style>

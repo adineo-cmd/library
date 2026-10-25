@@ -1,66 +1,40 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
-import DomainTree from '../components/views/DomainTree.svelte';
-
-// Mock data for the tree visualization (replace with your actual data loader later)
-const mainDomains = [
-  { id: '01', label: 'Sciences' },
-  { id: '02', label: 'Mathematics & Logic' },
-  { id: '03', label: 'Technology & Computing' },
-  { id: '04', label: 'Humanities' },
-  { id: '05', label: 'Social Sciences' },
-  { id: '06', label: 'Arts & Culture' },
-  { id: '07', label: 'Health & Medicine' },
-  { id: '08', label: 'Law & Governance' },
-];
+import HomeFan from '../components/views/HomeFan.svelte';
 ---
 
-<BaseLayout title="Home" currentPage="home">
-  <div class="page-container">
-    <div class="header-section">
-      <div class="eyebrow">Welcome</div>
-      <h1 class="page-title">Where would you like to wander today?</h1>
+<BaseLayout
+  title="Home"
+  description="An atlas of 9,261 human knowledge disciplines, arranged as eight trunks you can wander."
+  currentPage="home"
+>
+  <div class="page">
+    <header class="intro">
+      <p class="eyebrow">Atlas Root</p>
+      <h1 class="page-title">Where would you like to wander?</h1>
       <p class="page-subtitle">
-        These are the main trunks of the atlas — every domain, subdomain, and 
+        These are the main trunks of the atlas — every domain, subdomain, and
         roadmap below grows out from one of these.
       </p>
-    </div>
+    </header>
 
-    <div class="search-bar">
-      <span class="search-icon">⌕</span>
-      <input type="text" id="domainSearch" placeholder="search main domains, e.g. sciences, arts, technology" />
-    </div>
-
-    <div class="tree-container">
-      <DomainTree client:only="svelte" domains={mainDomains} />
-    </div>
+    <HomeFan client:only="svelte" />
   </div>
 </BaseLayout>
 
 <style>
-  .page-container {
-    max-width: 1400px;
+  .page {
+    max-width: 1180px;
     margin: 0 auto;
-    padding: 60px 40px 80px;
+    padding: 56px 40px 72px;
   }
 
-  .header-section {
-    margin-bottom: 40px;
-  }
-
-  .tree-container {
-    width: 100%;
-    height: 600px;
-    margin-top: 40px;
-    position: relative;
+  .intro {
+    max-width: 720px;
+    margin-bottom: 8px;
   }
 
   @media (max-width: 768px) {
-    .page-container {
-      padding: 40px 20px 60px;
-    }
-    .tree-container {
-      height: 500px;
-    }
+    .page { padding: 36px 20px 56px; }
   }
 </style>
