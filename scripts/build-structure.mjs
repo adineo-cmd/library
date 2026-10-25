@@ -311,8 +311,8 @@ function main() {
   console.log('layout done');
 
   // ---- emit -------------------------------------------------------------------
-  const trunks = [...SPINE.map(t => ({ id: t.id, name: t.name, num: t.num, color: t.color })),
-    { id: GENERAL_TRUNK.id, name: GENERAL_TRUNK.name, num: GENERAL_TRUNK.num, color: GENERAL_TRUNK.color }];
+  const trunks = [...SPINE.map(t => ({ id: t.id, name: t.name, color: t.color })),
+    { id: GENERAL_TRUNK.id, name: GENERAL_TRUNK.name, color: GENERAL_TRUNK.color }];
 
   mkdirSync(OUT, { recursive: true });
   writeFileSync(resolve(OUT, 'structure.json'), JSON.stringify({
@@ -333,7 +333,7 @@ function main() {
   console.log(`nodes: ${nodes.length} (spine ${nodes.length - qids.length}, pool ${qids.length}), xlinks: ${xlinks.length}`);
   for (let ti = 0; ti < trunks.length; ti++) {
     const count = nodes.filter(n => n.trunk === ti && n.kind === 'field').length;
-    console.log(`  ${trunks[ti].num} ${trunks[ti].name.padEnd(26)} fields=${count}`);
+    console.log(`  ${trunks[ti].name.padEnd(26)} fields=${count}`);
   }
 }
 

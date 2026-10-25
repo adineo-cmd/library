@@ -50,7 +50,7 @@
         if (n.kind === 'domain' && !n.id.startsWith('other:')) domainCount[n.trunk]++;
       }
       trunks = s.trunks.map((t: any, i: number) => ({
-        id: t.id, name: t.name, num: t.num, color: t.color,
+        id: t.id, name: t.name, color: t.color,
         fieldCount: fieldCount[i], domainCount: domainCount[i],
       }));
       status = 'ready';
@@ -110,7 +110,6 @@
           onmouseleave={() => (hover = null)}
         >
           <circle cx={LABEL_X} cy={y} r={active ? 7 : 5} fill={t.color} />
-          <text class="trunk-num" x={LABEL_X - 14} y={y + 4}>{t.num}</text>
           <a href={`/domains#${t.id}`}>
             <text class="trunk-name" x={LABEL_X + 16} y={y + 4} fill={active ? t.color : 'var(--text-primary)'}>
               {t.name}
@@ -152,12 +151,6 @@
     font-size: 16px;
     fill: var(--text-primary);
     transition: fill 0.2s ease;
-  }
-  .trunk-num {
-    font-family: var(--font-data);
-    font-size: 10px;
-    fill: var(--text-muted);
-    text-anchor: end;
   }
   .trunk-meta {
     font-family: var(--font-data);
