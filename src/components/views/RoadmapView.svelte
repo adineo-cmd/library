@@ -1,97 +1,190 @@
 <script lang="ts">
   /**
-   * The roadmap viewer: a learning path as a picture.
+   * The roadmap viewer — a learning path as a horizontal dendrogram.
    *
-   * The roadmap.sh idiom, rebuilt from the atlas: rows of topic boxes read
-   * top to bottom along a drawn spine, each box clickable, each row a level
-   * of the path. Clicking a box opens the side panel — description, related
-   * fields, the Wikipedia article. Ticking a box records progress in
-   * localStorage; the spine fills in as steps are completed.
-   *
-   * The slug comes from the URL; the roadmap itself is one lookup in
-   * roadmaps.json, fetched once and kept.
+   * Same pattern as the domains explorer: a D3 left-to-right tree filling
+   * the whole viewport, root at the left, one branch per level of the path
+   * (Foundations → Core → Advanced → …), topics stacked vertically inside
+   * their branch. Clicking a topic opens the notes drawer from the LEFT
+   * with its description, Wikipedia link and a done-toggle; completed
+   * topics turn green on the tree. Floating glass panels carry the title,
+   * the progress pill and the reset button.
    */
   import { onMount } from 'svelte';
-
-  const BASE = import.meta.env.BASE_URL;
+  import * as d3 from 'd3';
 
   interface RNode {
-    id: string; label: string; level: number; x: number; y: number;
-    kind: 'primary' | 'optional'; desc: string | null; wiki: string | null; size: number;
+    id: string; label: string; level: number; kind: 'primary' | 'optional';
+    desc: string | null; wiki: string | null; size: number;
   }
   interface Roadmap {
     slug: string; node: number; levelCount: number;
     nodes: RNode[]; edges: [number, number][];
   }
 
+  const BASE = import.meta.env.BASE_URL;
+  const LEVELS = ['Foundations', 'Core', 'Advanced', 'Specialisations', 'Frontiers', 'Further'];
+
   let status: 'loading' | 'ready' | 'error' = 'loading';
   let error = '';
-  let roadmap: Roadmap | null = null;
-  let trunks: { id: string; name: string; num: string; color: string }[] = [];
-  let structureNodes: { name: string; kind: string; trunk: number; wiki: string | null; description: string | null }[] = [];
-  let relatedBySlug: number[][] = [];
 
   let slug = '';
+  let roadmap: Roadmap | null = null;
+  let title = '';
+  let trunkName = '';
+  let trunkColor = '#c9a227';
+  let desc = '';
+
   let done: Set<string> = new Set();
-  let selected: number | null = null;
-  let showOptional = true;
+  let doneCount = 0;
+  let total = 0;
 
-  const COL_W = 250;
-  const ROW_H = 170;
-  const NODE_W = 208;
-  const NODE_H = 50;
+  // drawer state
+  let drawerOpen = false;
+  let dLabel = '';
+  let dKind = '';
+  let dLevel = 0;
+  let dDesc: string | null = null;
+  let dWiki: string | null = null;
+  let dDone = false;
 
-  $: trunk = roadmap ? trunks[structureNodes[roadmap.node]?.trunk ?? 0] : null;
-  $: trunkColor = trunk?.color ?? '#e8b76a';
+  let svg: any, g: any, gLink: any, gNode: any, zoomBehavior: any, root: any;
+  let width = 1200, height = 800;
+  let stage: HTMLElement;
+  let idSeq = 0;
 
-  $: bounds = roadmap ? {
-    w: Math.max(...roadmap.nodes.map(n => n.x)) + NODE_W + 140,
-    h: Math.max(...roadmap.nodes.map(n => n.y)) + NODE_H + 90,
-  } : { w: 800, h: 400 };
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  const storageKey = (s: string) => `arbor-roadmap-${s}`;
 
-  $: levelRows = roadmap ? groupLevels(roadmap) : [];
+  const pos = (d: any) => `translate(${d.y},${d.x})`;
+  const diagonal = d3.linkHorizontal().x((d: any) => d.y).y((d: any) => d.x);
 
-  function groupLevels(rm: Roadmap) {
-    const rows: { level: number; nodes: number[] }[] = [];
-    rm.nodes.forEach((n, i) => {
-      if (n.kind !== 'primary') return;
-      let row = rows.find(r => r.level === n.level);
-      if (!row) { row = { level: n.level, nodes: [] }; rows.push(row); }
-      row.nodes.push(i);
-    });
-    rows.sort((a, b) => a.level - b.level);
-    return rows;
+  function update(source: any, first = false) {
+    d3.tree().nodeSize([30, 220])(root);
+    const nodesNow = root.descendants();
+    const links = root.links();
+    const t = first ? 0 : 280;
+
+    const link = gLink.selectAll('path.rlink').data(links, (d: any) => d.target.id);
+    link.enter().append('path').attr('class', 'rlink')
+      .merge(link).transition().duration(t).attr('d', diagonal);
+    link.exit().transition().duration(t).attr('d', diagonal).remove();
+
+    const node = gNode.selectAll('g.rnode').data(nodesNow, (d: any) => d.id);
+    const nodeEnter = node.enter().append('g')
+      .attr('class', 'rnode')
+      .attr('transform', first ? pos : pos(source))
+      .attr('opacity', first ? 1 : 0)
+      .on('click', (event: any, d: any) => { event.stopPropagation(); clickNode(d); });
+
+    nodeEnter.append('circle')
+      .attr('r', (d: any) => d.data.kind === 'root' ? 10 : d.data.kind === 'level' ? 7 : 5)
+      .attr('class', (d: any) =>
+        `rc rc-${d.data.kind}${d.data.kind === 'topic' && d.data.done ? ' rc-done' : ''}`)
+      .style('fill', (d: any) =>
+        d.data.kind === 'root' ? trunkColor
+        : d.data.kind === 'level' ? (d.data.color ?? '#5d6cc0')
+        : d.data.done ? '#3fb950'
+        : d.data.kind === 'optional' ? '#6b7280' : '#8ab4ff');
+
+    nodeEnter.append('text')
+      .attr('dy', '0.32em')
+      .attr('class', (d: any) =>
+        `rl rl-${Math.min(d.depth, 3)}${d.data.kind === 'topic' && d.data.done ? ' rl-done' : ''}`)
+      .attr('x', (d: any) => (d.data.kind === 'root' ? -14 : 12))
+      .attr('text-anchor', (d: any) => (d.data.kind === 'root' ? 'end' : 'start'))
+      .text((d: any) => d.data.name);
+
+    nodeEnter.merge(node).transition().duration(t)
+      .attr('transform', pos).attr('opacity', 1);
+    node.exit().transition().duration(t)
+      .attr('transform', pos(source)).attr('opacity', 0).remove();
   }
 
-  $: related = selected !== null ? relatedBySlug[selected] ?? [] : [];
+  function clickNode(d: any) {
+    if (d.data.kind === 'topic' || d.data.kind === 'optional') { openDrawer(d.data); return; }
+    if (d.children) { d._children = d.children; d.children = null; }
+    else if (d._children) { d.children = d._children; d._children = null; }
+    update(d);
+  }
 
-  function storageKey(s: string) { return `arbor-roadmap-${s}`; }
+  function openDrawer(data: any) {
+    drawerOpen = true;
+    dLabel = data.label ?? data.name;
+    dKind = data.kind === 'optional' ? 'related field' : 'topic';
+    dLevel = data.level ?? 0;
+    dDesc = data.desc ?? null;
+    dWiki = data.wiki ?? null;
+    dDone = data.kind !== 'optional' && done.has(data.id);
+  }
 
-  function toggleDone(nodeId: string) {
+  function toggleDone() {
+    if (!roadmap || !dLabel) return;
+    const node = roadmap.nodes.find(n => n.label === dLabel && n.kind === 'primary');
+    if (!node) return;
     const next = new Set(done);
-    if (next.has(nodeId)) next.delete(nodeId);
-    else next.add(nodeId);
+    if (next.has(node.id)) next.delete(node.id); else next.add(node.id);
     done = next;
-    try {
-      localStorage.setItem(storageKey(slug), JSON.stringify([...next]));
-    } catch { /* private mode: progress lives for the session only */ }
+    try { localStorage.setItem(storageKey(slug), JSON.stringify([...next])); } catch { /* session-only */ }
+    // refresh tree + drawer state
+    root.each((d: any) => { if (d.data.kind === 'topic') d.data.done = done.has(d.data.id); });
+    update(root);
+    doneCount = roadmap.nodes.filter(n => n.kind === 'primary' && done.has(n.id)).length;
+    dDone = done.has(node.id);
   }
 
-  $: doneCount = roadmap ? roadmap.nodes.filter(n => n.kind === 'primary' && done.has(n.id)).length : 0;
-  $: pct = roadmap && roadmap.nodes.some(n => n.kind === 'primary')
-    ? Math.round((doneCount / roadmap.nodes.filter(n => n.kind === 'primary').length) * 100)
-    : 0;
+  function resetProgress() {
+    if (!roadmap) return;
+    done = new Set();
+    try { localStorage.removeItem(storageKey(slug)); } catch { /* ignore */ }
+    root.each((d: any) => { if (d.data.kind === 'topic') d.data.done = false; });
+    update(root);
+    doneCount = 0;
+    dDone = false;
+  }
 
-  onMount(() => {
+  function fit() {
+    requestAnimationFrame(() => {
+      try {
+        const bounds = g.node().getBBox();
+        if (!bounds.width || !bounds.height) return;
+        const pad = 120;
+        const sx = Math.min(width / (bounds.width + pad * 2), height / (bounds.height + pad * 2), 1.4);
+        const tx = width / 2 - sx * (bounds.x + bounds.width / 2) + 40;
+        const ty = height / 2 - sx * (bounds.y + bounds.height / 2);
+        svg.transition().duration(450)
+          .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(sx));
+      } catch { /* not ready */ }
+    });
+  }
+
+  function collapseAll() {
+    root.descendants().forEach((d: any) => {
+      if (d.depth >= 1 && d.children) { d._children = d.children; d.children = null; }
+    });
+    update(root);
+    setTimeout(fit, 300);
+  }
+
+  /** darken the trunk colour a little per level so branches read as a sequence */
+  function shade(hex: string, step: number) {
+    const m = hex.replace('#', '');
+    const num = parseInt(m.length === 3 ? m.split('').map(c => c + c).join('') : m, 16);
+    const f = 1 - Math.min(0.45, step * 0.13);
+    const r = Math.round(((num >> 16) & 255) * f);
+    const g2 = Math.round(((num >> 8) & 255) * f);
+    const b = Math.round((num & 255) * f);
+    return `#${((r << 16) | (g2 << 8) | b).toString(16).padStart(6, '0')}`;
+  }
+
+  onMount(async () => {
     const parts = location.pathname.split('/').filter(Boolean);
     // ['memex','roadmap','physics'] on Pages, ['roadmap','physics'] locally
     slug = (parts[0] === 'memex' ? parts[2] : parts[1]) ?? '';
     try {
       done = new Set(JSON.parse(localStorage.getItem(storageKey(slug)) ?? '[]'));
     } catch { done = new Set(); }
-  });
 
-  onMount(async () => {
     try {
       const [rRes, sRes] = await Promise.all([
         fetch(`${BASE}data/artifacts/roadmaps.json`),
@@ -100,47 +193,93 @@
       if (!rRes.ok || !sRes.ok) throw new Error('artifact fetch failed');
       const r = await rRes.json();
       const s = await sRes.json();
-      trunks = s.trunks;
-      structureNodes = s.nodes;
       const rm = (r.roadmaps as Roadmap[]).find(x => x.slug === slug);
       if (!rm) throw new Error(`no roadmap for “${slug}”`);
       roadmap = rm;
-      // related fields per node index, from the atlas crosslinks
-      const xlinks: [number, number][] = s.xlinks;
-      const rel: number[][] = rm.nodes.map(() => []);
-      for (const [a, b] of xlinks) {
-        const i = rm.nodes.findIndex(n => n.id === s.nodes[a]?.id && n.kind === 'primary');
-        const j = rm.nodes.findIndex(n => n.id === s.nodes[b]?.id);
-        if (i >= 0 && j < 0) rel[i].push(b);
-        if (j >= 0 && i < 0 && rm.nodes[j]) rel[j].push(a);
+
+      const meta = s.nodes[rm.node];
+      title = meta?.name ?? slug;
+      desc = meta?.description ?? '';
+      trunkName = s.trunks[meta?.trunk]?.name ?? '';
+      trunkColor = s.trunks[meta?.trunk]?.color ?? '#c9a227';
+
+      // build the dendrogram: root → level branches → topics
+      const byLevel = new Map<number, any[]>();
+      for (const n of rm.nodes) {
+        if (n.kind !== 'primary') continue;
+        if (!byLevel.has(n.level)) byLevel.set(n.level, []);
+        byLevel.get(n.level)!.push({
+          name: n.label, kind: 'topic', id: n.id, level: n.level,
+          desc: n.desc, wiki: n.wiki, size: n.size,
+          done: done.has(n.id),
+        });
       }
-      relatedBySlug = rel;
+      const branches = [...byLevel.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([lv, topics]) => ({
+          name: LEVELS[lv] ?? `Level ${lv + 1}`,
+          kind: 'level', level: lv,
+          color: shade(trunkColor, lv),
+          children: topics,
+        }));
+      const optional = rm.nodes.filter(n => n.kind === 'optional');
+      if (optional.length) {
+        branches.push({
+          name: 'Related fields', kind: 'level', level: branches.length,
+          color: '#6b7280',
+          children: optional.map(n => ({
+            name: n.label, kind: 'optional', id: n.id, level: n.level,
+            desc: n.desc, wiki: n.wiki, size: n.size, done: false,
+          })),
+        });
+      }
+
+      total = rm.nodes.filter(n => n.kind === 'primary').length;
+      doneCount = rm.nodes.filter(n => n.kind === 'primary' && done.has(n.id)).length;
+
+      root = d3.hierarchy({
+        name: title, kind: 'root', children: branches,
+        desc, wiki: meta?.wiki ?? null,
+      });
+      root.x0 = 0; root.y0 = 0;
+      root.each((d: any) => { d.id = 't' + (idSeq++); });
+
+      // The stage div only exists once `status` flips to ready.
       status = 'ready';
+      await new Promise(r2 => requestAnimationFrame(r2));
+      stage = document.getElementById('rstage')!;
+      if (!stage) throw new Error('stage missing');
+      width = stage.clientWidth || window.innerWidth;
+      height = stage.clientHeight || window.innerHeight;
+
+      svg = d3.select(stage).append('svg')
+        .attr('viewBox', [0, 0, width, height])
+        .attr('width', '100%').attr('height', height);
+      g = svg.append('g');
+      gLink = g.append('g');
+      gNode = g.append('g');
+      zoomBehavior = d3.zoom().scaleExtent([0.15, 4])
+        .on('zoom', (event: any) => g.attr('transform', event.transform));
+      svg.call(zoomBehavior);
+
+      update(root, true);
+      fit();
+      setTimeout(fit, 150);
+
+      const ro = new ResizeObserver(() => {
+        const w = stage.clientWidth, h2 = stage.clientHeight;
+        if (w && h2 && (w !== width || h2 !== height)) {
+          width = w; height = h2;
+          svg.attr('viewBox', [0, 0, width, height]).attr('height', height);
+          fit();
+        }
+      });
+      ro.observe(stage);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       status = 'error';
     }
   });
-
-  const fmt = (n: number) => n.toLocaleString('en-US');
-
-  /** The spine: a smooth path through the primary nodes in reading order. */
-  function spinePath(rm: Roadmap): string {
-    const pts = rm.nodes
-      .map((n, i) => ({ n, i }))
-      .filter(({ n }) => n.kind === 'primary')
-      .sort((a, b) => a.n.level - b.n.level || a.n.x - b.n.x)
-      .map(({ n }) => [n.x + NODE_W / 2, n.y + NODE_H / 2]);
-    if (pts.length < 2) return '';
-    let d = `M ${pts[0][0]} ${pts[0][1]}`;
-    for (let i = 1; i < pts.length; i++) {
-      const [x0, y0] = pts[i - 1];
-      const [x1, y1] = pts[i];
-      const my = (y0 + y1) / 2;
-      d += ` C ${x0} ${my}, ${x1} ${my}, ${x1} ${y1}`;
-    }
-    return d;
-  }
 </script>
 
 <div class="view">
@@ -152,256 +291,173 @@
       <p class="state__detail">{error}</p>
       <p class="state__hint"><a href={`${BASE}roadmap`}>← back to all roadmaps</a></p>
     </div>
-  {:else if roadmap}
-    <header class="head">
-      <p class="head__crumb">
-        <a href={`${BASE}roadmap`}>Roadmaps</a>
-        {#if trunk}<span class="head__sep">/</span><span style={`color:${trunkColor}`}>{trunk.name}</span>{/if}
-      </p>
-      <h1 class="head__title">{structureNodes[roadmap.node]?.name ?? 'Roadmap'}</h1>
-      {#if structureNodes[roadmap.node]?.description}
-        <p class="head__desc">{structureNodes[roadmap.node].description}</p>
-      {/if}
-      <div class="progress">
-        <div class="progress__bar"><div class="progress__fill" style={`width:${pct}%`}></div></div>
-        <span class="progress__text num">{doneCount}/{roadmap.nodes.filter(n => n.kind === 'primary').length} done · {pct}%</span>
-        <label class="opt-toggle">
-          <input type="checkbox" bind:checked={showOptional} /> optional fields
-        </label>
-        <button type="button" class="reset" onclick={() => { done = new Set(); try { localStorage.removeItem(storageKey(slug)); } catch {} }}>
-          reset progress
-        </button>
+  {:else}
+    <div id="rstage" class="stage" role="img" aria-label="Learning roadmap for {title}"></div>
+
+    <div class="floats">
+      <div class="panel title-panel">
+        <p class="crumb">
+          <a href={`${BASE}roadmap`}>← All roadmaps</a>{#if trunkName}<span class="sep">·</span><span style={`color:${trunkColor}`}>{trunkName}</span>{/if}
+        </p>
+        <h1 class="rm-title">{title}</h1>
+        {#if desc}
+          <p class="rm-desc">{desc}</p>
+        {/if}
+        <div class="progress">
+          <div class="bar"><div class="fill" style={`width:${total ? Math.round(100 * doneCount / total) : 0}%;background:${trunkColor}`}></div></div>
+          <span class="num">{doneCount}/{total} done</span>
+        </div>
       </div>
-    </header>
-
-    <div class="stage">
-      <svg
-        viewBox="0 0 {bounds.w} {bounds.h}"
-        role="img"
-        aria-label="Learning roadmap for {structureNodes[roadmap.node]?.name}"
-      >
-        <!-- level rails -->
-        {#each levelRows as row (row.level)}
-          {@const first = roadmap!.nodes[row.nodes[0]]}
-          <text class="rail-label" x={24} y={first.y + NODE_H / 2 + 4}>
-            {['Foundations', 'Core', 'Advanced', 'Specialisations', 'Frontiers', 'Further'][row.level] ?? `Level ${row.level + 1}`}
-          </text>
-        {/each}
-
-        <!-- the spine -->
-        <path class="spine" d={spinePath(roadmap)} style={`--trunk:${trunkColor}`} />
-
-        <!-- edges as soft connectors -->
-        {#each roadmap.edges as [a, b], ei (ei)}
-          {@const na = roadmap!.nodes[a]}
-          {@const nb = roadmap!.nodes[b]}
-          {#if na && nb && (na.kind === 'primary' || showOptional) && (nb.kind === 'primary' || showOptional)}
-            <line
-              class="edge"
-              class:edge--opt={na.kind === 'optional' || nb.kind === 'optional'}
-              x1={na.x + NODE_W / 2} y1={na.y + NODE_H / 2}
-              x2={nb.x + NODE_W / 2} y2={nb.y + NODE_H / 2}
-            />
-          {/if}
-        {/each}
-
-        <!-- nodes -->
-        {#each roadmap.nodes as n, i (i)}
-          {#if n.kind === 'optional' && !showOptional}
-            <!-- continue -->
-          {:else}
-            {@const isDone = done.has(n.id)}
-            {@const isSel = selected === i}
-            <g
-              class="node"
-              class:node--opt={n.kind === 'optional'}
-              class:node--done={isDone}
-              class:node--sel={isSel}
-              style={`--trunk:${trunkColor}`}
-              onclick={() => { selected = selected === i ? null : i; }}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selected = selected === i ? null : i; } }}
-              role="button"
-              tabindex="0"
-              transform="translate({n.x}, {n.y})"
-            >
-              <rect
-                width={NODE_W} height={NODE_H}
-                rx={n.kind === 'optional' ? NODE_H / 2 : 10}
-              />
-              {#if n.kind === 'primary'}
-                <g
-                  class="tick"
-                  role="checkbox"
-                  aria-checked={isDone}
-                  tabindex="-1"
-                  onclick={(e) => { e.stopPropagation(); toggleDone(n.id); }}
-                  onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); toggleDone(n.id); } }}
->
-                  <circle cx={NODE_W - 20} cy={NODE_H / 2} r="8" />
-                  {#if isDone}
-                    <path class="tick__mark" d={`M ${NODE_W - 24} ${NODE_H / 2} l 3 3 l 6 -7`} />
-                  {/if}
-                </g>
-              {/if}
-              <text class="node__label" x="14" y={NODE_H / 2 + 4.5}>
-                {n.label.length > 24 ? n.label.slice(0, 23) + '…' : n.label}
-              </text>
-              <title>{n.label}{n.desc ? ` — ${n.desc}` : ''}</title>
-            </g>
-          {/if}
-        {/each}
-      </svg>
+      <div class="panel tools">
+        <button type="button" onclick={collapseAll}>Collapse</button>
+        <button type="button" onclick={fit}>Fit</button>
+        <button type="button" class="danger" onclick={resetProgress}>Reset</button>
+      </div>
+      <p class="hint">click a topic for notes · drag to pan · scroll to zoom</p>
     </div>
 
-    {#if selected !== null && roadmap.nodes[selected]}
-      {@const n = roadmap.nodes[selected]}
-      <aside class="panel">
-        <header class="panel__head">
-          <span class="panel__kind">{n.kind === 'optional' ? 'related field' : `level ${n.level + 1}`}</span>
-          <button type="button" class="panel__close" onclick={() => (selected = null)}>close</button>
-        </header>
-        <h2 class="panel__title">{n.label}</h2>
-        <p class="panel__desc">{n.desc ?? 'A field of the atlas — its own entry waits in the domains view.'}</p>
-        {#if related.length}
-          <p class="panel__label">Related fields</p>
-          <ul class="panel__related">
-            {#each related.slice(0, 5) as r (r)}
-              <li>{structureNodes[r]?.name ?? r}</li>
-            {/each}
-          </ul>
-        {/if}
-        {#if n.wiki}
-          <a class="panel__wiki" href={`https://en.wikipedia.org/wiki/${n.wiki}`} target="_blank" rel="noopener noreferrer">
+    <div class="backdrop" class:show={drawerOpen} onclick={() => (drawerOpen = false)}></div>
+    <aside class="notes" class:open={drawerOpen} style={`--trunk:${trunkColor}`}>
+      <button type="button" class="notes-close" onclick={() => (drawerOpen = false)} aria-label="Close notes">✕</button>
+      <p class="notes-kicker">
+        {dKind}{dKind === 'topic' ? ` · ${LEVELS[dLevel] ?? `Level ${dLevel + 1}`}` : ''}
+      </p>
+      <h2 class="notes-title">{dLabel}</h2>
+
+      {#if dKind === 'topic'}
+        <button type="button" class="done-toggle" class:primary={dDone} onclick={toggleDone}>
+          {dDone ? '✓ Completed — undo?' : 'Mark as completed'}
+        </button>
+      {/if}
+
+      {#if dDesc}
+        <section>
+          <h3>What it is</h3>
+          <p>{dDesc}</p>
+        </section>
+      {/if}
+
+      {#if dWiki}
+        <section>
+          <h3>Elsewhere</h3>
+          <a class="wiki" href={`https://en.wikipedia.org/wiki/${dWiki}`} target="_blank" rel="noopener noreferrer">
             Read on Wikipedia ↗
           </a>
-        {/if}
-        {#if n.kind === 'primary'}
-          <button type="button" class="panel__done" onclick={() => toggleDone(n.id)}>
-            {done.has(n.id) ? '✓ completed — untick' : 'mark as done'}
-          </button>
-        {/if}
-      </aside>
-    {/if}
+        </section>
+      {/if}
+    </aside>
   {/if}
 </div>
 
 <style>
-  .view { position: relative; max-width: 1180px; margin: 0 auto; padding: 0 40px 72px; }
+  .view {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at 28% 40%, #12151a 0%, #0b0d0c 70%);
+  }
 
-  .state { padding: 64px 0; color: var(--text-muted); font-size: 14px; }
+  .state { padding: 120px 0 0 90px; color: var(--text-muted); font-size: 14px; }
   .state--error p { margin-bottom: 8px; }
   .state__detail { color: var(--text-secondary); font-size: 12px; }
   .state__hint a { color: var(--text-secondary); font-size: 12px; }
 
-  .head { max-width: 760px; margin-bottom: 8px; }
-  .head__crumb { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
-  .head__crumb a { color: var(--text-secondary); text-decoration: none; }
-  .head__crumb a:hover { color: var(--text-primary); }
-  .head__sep { margin: 0 8px; color: var(--line-light); }
-  .head__title {
-    font-family: var(--font-display); font-size: clamp(30px, 4vw, 46px);
-    font-weight: 500; color: var(--text-primary); line-height: 1.1;
-  }
-  .head__desc { font-size: 14px; color: var(--text-secondary); margin-top: 10px; line-height: 1.6; }
+  .stage { position: absolute; inset: 0; cursor: grab; }
+  .stage:active { cursor: grabbing; }
 
-  .progress { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
-  .progress__bar {
-    width: 220px; height: 6px; border-radius: 3px;
-    background: var(--bg-tertiary); overflow: hidden;
-  }
-  .progress__fill { height: 100%; background: var(--trunk, var(--accent)); transition: width 0.3s ease; }
-  .progress__text { font-size: 11px; color: var(--text-muted); }
-  .opt-toggle { font-size: 11px; color: var(--text-muted); display: flex; gap: 6px; align-items: center; margin-left: auto; cursor: pointer; }
-  .opt-toggle input { accent-color: var(--accent); }
-  .reset {
-    background: none; border: 1px solid var(--line); border-radius: 6px;
-    color: var(--text-muted); font-size: 11px; padding: 4px 10px; cursor: pointer;
-  }
-  .reset:hover { color: var(--text-secondary); }
+  :global(.rlink) { fill: none; stroke: #333b44; stroke-width: 1.15; }
+  :global(.rnode) { cursor: pointer; }
+  :global(.rnode text) { font-family: var(--font-body); fill: #c8ccd1; }
+  :global(.rl) { font-size: 13px; }
+  :global(.rl-0) { font-size: 16px; font-weight: 800; fill: #e8b76a; }
+  :global(.rl-1) { font-size: 13.5px; font-weight: 700; fill: #e6e2d6; }
+  :global(.rl-2) { font-size: 12.5px; }
+  :global(.rl-done) { fill: #86d99a !important; }
+  :global(.rc) { stroke: #0b0d0c; stroke-width: 1.5; }
+  :global(.rc:hover) { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.45)); }
+  :global(.rc-done) { fill: #3fb950 !important; }
 
-  .stage {
-    margin-top: 8px;
-    overflow-x: auto;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--bg-secondary);
-  }
-  svg { display: block; min-width: 760px; width: 100%; height: auto; }
-
-  .rail-label {
-    font-family: var(--font-data); font-size: 10px; letter-spacing: 0.14em;
-    text-transform: uppercase; fill: var(--text-muted);
-  }
-
-  .spine {
-    fill: none;
-    stroke: color-mix(in srgb, var(--trunk) 45%, transparent);
-    stroke-width: 3;
-    stroke-linecap: round;
-  }
-  .edge { stroke: var(--line-light); stroke-width: 1.4; }
-  .edge--opt { stroke-dasharray: 4 4; stroke: var(--line-light); opacity: 0.7; }
-
-  .node { cursor: pointer; }
-  .node rect {
-    fill: var(--bg-primary);
-    stroke: color-mix(in srgb, var(--trunk) 55%, var(--line-light));
-    stroke-width: 1.4;
-    transition: fill 0.15s ease;
-  }
-  .node:hover rect { fill: color-mix(in srgb, var(--trunk) 10%, var(--bg-primary)); }
-  .node__label { font-size: 13px; fill: var(--text-primary); font-family: var(--font-body); }
-  .node--opt rect { stroke-dasharray: 5 4; stroke: var(--line-light); }
-  .node--opt .node__label { fill: var(--text-secondary); font-style: italic; }
-  .node--done rect { fill: color-mix(in srgb, var(--trunk) 16%, var(--bg-primary)); }
-  .node--sel rect { stroke-width: 2.4; }
-
-  .tick { cursor: pointer; }
-  .tick circle { fill: var(--bg-tertiary); stroke: var(--line-light); }
-  .node--done .tick circle { fill: var(--trunk); stroke: var(--trunk); }
-  .tick__mark { stroke: #10130f; stroke-width: 2; fill: none; }
-
+  .floats { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
   .panel {
-    position: sticky; bottom: 16px;
-    margin-top: 18px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--trunk, var(--accent));
-    border-radius: 10px;
-    padding: 18px 22px;
+    pointer-events: auto;
+    background: var(--glass); backdrop-filter: blur(10px);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   }
-  .panel__head { display: flex; justify-content: space-between; align-items: baseline; }
-  .panel__kind {
-    font-family: var(--font-data); font-size: 9.5px; letter-spacing: 0.14em;
-    text-transform: uppercase; color: var(--text-muted);
+  .title-panel { position: absolute; top: 14px; left: 72px; max-width: 460px; }
+  .crumb { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .crumb a { color: var(--text-secondary); text-decoration: none; }
+  .crumb a:hover { color: var(--text-primary); }
+  .crumb .sep { margin: 0 7px; }
+  .rm-title { font-family: var(--font-body); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 4px; }
+  .rm-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; margin: 0 0 10px; }
+  .progress { display: flex; align-items: center; gap: 10px; }
+  .progress .bar {
+    width: 150px; height: 6px; border-radius: 99px;
+    background: var(--bg-tertiary); overflow: hidden; border: 1px solid var(--line);
   }
-  .panel__close {
-    background: none; border: none; color: var(--text-muted);
-    font-size: 11px; cursor: pointer;
+  .progress .fill { height: 100%; transition: width 0.3s; }
+  .progress span { font-size: 11px; color: var(--text-muted); }
+
+  .tools { position: absolute; top: 14px; right: 16px; display: flex; gap: 8px; }
+  .tools button {
+    background: transparent; border: 1px solid var(--line-light); border-radius: 999px;
+    color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 6px 14px; cursor: pointer;
   }
-  .panel__close:hover { color: var(--text-secondary); }
-  .panel__title { font-family: var(--font-display); font-size: 24px; color: var(--text-primary); margin: 6px 0 4px; }
-  .panel__desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin: 0 0 10px; max-width: 70ch; }
-  .panel__label {
-    font-family: var(--font-data); font-size: 9.5px; letter-spacing: 0.14em;
-    text-transform: uppercase; color: var(--text-muted); margin: 10px 0 6px;
-  }
-  .panel__related { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-  .panel__related li {
-    font-size: 11.5px; color: var(--text-secondary);
-    border: 1px solid var(--line-light); border-radius: 999px; padding: 3px 10px;
-  }
-  .panel__wiki { display: inline-block; font-size: 12.5px; color: var(--accent); margin-top: 10px; text-decoration: none; }
-  .panel__wiki:hover { text-decoration: underline; }
-  .panel__done {
-    display: block; margin-top: 14px;
-    background: var(--trunk, var(--accent)); color: #10130f;
-    border: none; border-radius: 8px; padding: 9px 16px;
-    font-size: 12.5px; font-weight: 500; cursor: pointer;
+  .tools button:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+  .tools .danger:hover { border-color: #f85149; color: #f85149; }
+
+  .hint {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: var(--text-muted); font-size: 12px;
+    background: rgba(13, 16, 15, 0.75); border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px 14px; pointer-events: none; white-space: nowrap;
   }
 
-  @media (max-width: 720px) {
-    .view { padding: 0 16px 48px; }
-    .panel { position: static; }
+  .backdrop {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 90;
+    opacity: 0; transition: opacity 0.18s; pointer-events: none;
+  }
+  .backdrop.show { opacity: 1; pointer-events: auto; }
+
+  .notes {
+    position: fixed; top: 0; left: 0; bottom: 0; width: min(430px, 92vw); z-index: 100;
+    background: var(--bg-secondary); border-right: 1px solid var(--line-light);
+    box-shadow: 18px 0 50px rgba(0, 0, 0, 0.5);
+    transform: translateX(-103%); transition: transform 0.22s ease;
+    overflow-y: auto; padding: 20px 22px 40px;
+  }
+  .notes.open { transform: translateX(0); }
+  .notes-close {
+    position: absolute; top: 14px; right: 14px; width: 32px; height: 32px;
+    border-radius: 50%; border: 1px solid var(--line-light);
+    background: transparent; color: var(--text-muted); cursor: pointer;
+  }
+  .notes-close:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+  .notes-kicker {
+    font-family: var(--font-data); font-size: 10.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--trunk); margin-bottom: 6px;
+  }
+  .notes-title { font-family: var(--font-display); font-size: 26px; margin-bottom: 12px; padding-right: 28px; }
+  .done-toggle {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    border-radius: 999px; border: 1px solid var(--line-light);
+    background: transparent; color: var(--text-primary); font: inherit;
+    font-size: 13px; font-weight: 600; padding: 7px 15px; margin: 2px 0 14px;
+  }
+  .done-toggle:hover { border-color: var(--text-secondary); }
+  .done-toggle.primary { background: #274d33; border-color: #3fb950; color: #86d99a; }
+  .notes section { border-top: 1px solid var(--line); padding: 14px 0; }
+  .notes section h3 {
+    font-family: var(--font-data); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.12em; color: var(--text-muted); margin-bottom: 9px;
+  }
+  .notes p { color: #c8ccd1; font-size: 14px; line-height: 1.6; }
+  .wiki { font-size: 13.5px; color: var(--text-secondary); text-decoration: none; }
+  .wiki:hover { color: var(--trunk); }
+
+  @media (max-width: 640px) {
+    .title-panel { left: 64px; max-width: 68vw; }
+    .tools { top: auto; bottom: 14px; right: 12px; }
+    .hint { display: none; }
   }
 </style>
