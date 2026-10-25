@@ -7,12 +7,24 @@ interface Props {
 
 const { title, description = '', currentPage = 'home' } = Astro.props;
 const base = import.meta.env.BASE_URL;
+const fullChrome = currentPage === 'home';
 
 const navItems = [
-  { key: 'home', label: 'Home', href: base },
-  { key: 'domains', label: 'Domains', href: `${base}domains` },
-  { key: 'roadmap', label: 'Roadmap', href: `${base}roadmap` },
-  { key: 'graph', label: 'Graph View', href: `${base}graph` },
+  { key: 'home', label: 'Home', sub: 'The atlas root', href: base },
+  { key: 'domains', label: 'Domains', sub: 'Every field in one tree', href: `${base}domains` },
+  { key: 'roadmap', label: 'Roadmap', sub: 'Learning paths for each field', href: `${base}roadmap` },
+  { key: 'graph', label: 'Graph View', sub: 'The whole atlas, drifting', href: `${base}graph` },
+];
+
+const trunks = [
+  { id: 'sciences', name: 'Sciences', color: '#7ee0a3' },
+  { id: 'formal', name: 'Mathematics & Logic', color: '#9db8ff' },
+  { id: 'technology', name: 'Technology & Computing', color: '#ffb86b' },
+  { id: 'humanities', name: 'Humanities', color: '#e0a9ff' },
+  { id: 'social', name: 'Social Sciences', color: '#ffd97a' },
+  { id: 'arts', name: 'Arts & Culture', color: '#ff9e9e' },
+  { id: 'health', name: 'Health & Medicine', color: '#8ce3e0' },
+  { id: 'law', name: 'Law & Governance', color: '#c2f28a' },
 ];
 ---
 
@@ -23,18 +35,13 @@ const navItems = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title} — Arbor</title>
     <meta name="description" content={description} />
-    
-    <!-- Fonts -->
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
     <style>
       :root {
-        /* Cartographic field atlas: slate-green-black ground, hairline rules,
-           one warm ink. Kept dark-first because a night-readable atlas is the
-           point, but the light theme is a first-class paper mode, not an
-           inversion. */
         --bg-primary: #0c0f0e;
         --bg-secondary: #111614;
         --bg-tertiary: #171d1a;
@@ -45,13 +52,12 @@ const navItems = [
         --accent-soft: rgba(201, 162, 39, 0.14);
         --line: #1c2320;
         --line-light: #2b3530;
-        
+        --glass: rgba(13, 16, 15, 0.82);
         --font-display: 'Cormorant Garamond', Georgia, serif;
         --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         --font-data: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
       }
 
-      /* --- LIGHT THEME: aged plate paper --- */
       html[data-theme="light"] {
         --bg-primary: #f2efe6;
         --bg-secondary: #e9e5d9;
@@ -63,16 +69,12 @@ const navItems = [
         --accent-soft: rgba(138, 109, 18, 0.12);
         --line: #d8d3c5;
         --line-light: #c2bcab;
+        --glass: rgba(242, 239, 230, 0.88);
       }
 
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
 
       html, body {
-        height: 100%;
         background: var(--bg-primary);
         color: var(--text-primary);
         font-family: var(--font-body);
@@ -80,241 +82,200 @@ const navItems = [
         transition: background-color 0.4s ease, color 0.4s ease;
       }
 
+      /* Non-home pages drop the header entirely: the page is the tool, the
+         hamburger is the way back. */
+      body.chrome-min .header, body.chrome-min .footer { display: none; }
+      body.chrome-min .main { min-height: 100vh; }
+      body.chrome-full .hamburger,
+      body.chrome-full .sidebar,
+      body.chrome-full .sidebar-backdrop { display: none !important; }
+
       .header {
-        position: sticky;
-        top: 0;
-        z-index: 100;
+        position: sticky; top: 0; z-index: 100;
         background: var(--bg-primary);
         border-bottom: 1px solid var(--line);
-        transition: background-color 0.4s ease, border-color 0.4s ease;
       }
-
       .header-top {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
+        display: flex; align-items: baseline; justify-content: space-between;
         padding: 20px 40px;
       }
-
-      .brand {
-        display: flex;
-        align-items: baseline;
-        gap: 14px;
-      }
-
+      .brand { display: flex; align-items: baseline; gap: 14px; }
       .brand-name {
-        font-family: var(--font-display);
-        font-size: 30px;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--text-primary);
+        font-family: var(--font-display); font-size: 30px; font-weight: 600;
+        letter-spacing: 0.06em; text-transform: uppercase;
       }
-
-      /* Tracking here is doing real work: this is a data line, not a label. */
       .brand-tagline {
-        font-family: var(--font-data);
-        font-size: 10px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: var(--text-muted);
+        font-family: var(--font-data); font-size: 10px; letter-spacing: 0.14em;
+        text-transform: uppercase; color: var(--text-muted);
       }
-
       .theme-toggle {
-        width: 48px;
-        height: 24px;
-        border-radius: 12px;
-        background: var(--bg-tertiary);
-        border: 1px solid var(--line);
-        position: relative;
-        cursor: pointer;
-        transition: all 0.3s ease;
+        width: 48px; height: 24px; border-radius: 12px;
+        background: var(--bg-tertiary); border: 1px solid var(--line);
+        position: relative; cursor: pointer;
       }
-
       .theme-toggle::after {
-        content: "☾";
-        position: absolute;
-        top: 2px;
-        left: 2px;
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: var(--accent);
-        color: var(--bg-primary);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        transition: transform 0.3s cubic-bezier(0.6, 0.2, 0.1, 1);
+        content: "☾"; position: absolute; top: 2px; left: 2px;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: var(--accent); color: var(--bg-primary);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 11px; transition: transform 0.3s cubic-bezier(0.6, 0.2, 0.1, 1);
       }
-
       html[data-theme="light"] .theme-toggle::after {
-        transform: translateX(24px);
-        content: "☀";
+        transform: translateX(24px); content: "☀";
       }
 
-      .nav {
-        display: flex;
-        justify-content: center;
-        padding: 0 40px;
-      }
-
-      /* Numbered steps, pill for the current page — the atlas reads as a
-         sequence of views, so the numbering encodes that and the pill marks
-         where the reader stands. */
-      .nav-list {
-        display: flex;
-        gap: 10px;
-        list-style: none;
-      }
-
+      .nav { display: flex; justify-content: center; padding: 0 40px; }
+      .nav-list { display: flex; gap: 10px; list-style: none; }
       .nav-link {
         display: inline-block;
-        font-family: var(--font-data);
-        font-size: 11px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        padding: 9px 18px;
-        border-radius: 999px;
-        text-decoration: none;
+        font-family: var(--font-data); font-size: 11px; letter-spacing: 0.16em;
+        text-transform: uppercase; color: var(--text-muted);
+        padding: 9px 18px; border-radius: 999px; text-decoration: none;
         transition: color 0.2s ease, background-color 0.25s ease;
       }
+      .nav-link:hover { color: var(--text-secondary); }
+      .nav-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .nav-link.active { color: #14100a; background: var(--accent); }
+      html[data-theme="light"] .nav-link.active { color: #fdfbf4; }
 
-      .nav-link:hover {
-        color: var(--text-secondary);
+      .main { min-height: calc(100vh - 140px); position: relative; }
+
+      /* ---------- hamburger + sidebar (the CareerMap pattern) ---------- */
+      .hamburger {
+        position: fixed; top: 14px; left: 14px; z-index: 300;
+        width: 44px; height: 44px; border-radius: 12px; cursor: pointer;
+        background: var(--glass); backdrop-filter: blur(8px);
+        border: 1px solid var(--line-light);
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 5px; padding: 0;
       }
-
-      .nav-link:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
+      .hamburger span {
+        display: block; width: 20px; height: 2px; border-radius: 2px;
+        background: var(--text-primary); transition: transform 0.18s, opacity 0.18s;
       }
+      .hamburger:hover span { background: var(--accent); }
 
-      .nav-link.active {
-        color: #14100a;
-        background: var(--accent);
+      .sidebar-backdrop {
+        position: fixed; inset: 0; z-index: 280; background: rgba(0, 0, 0, 0.55);
+        opacity: 0; transition: opacity 0.2s;
       }
-
-      html[data-theme="light"] .nav-link.active {
-        color: #fdfbf4;
-        background: var(--accent);
+      .sidebar-backdrop.show { opacity: 1; }
+      .sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0; z-index: 290;
+        width: 284px; max-width: 86vw;
+        background: var(--bg-secondary); border-right: 1px solid var(--line-light);
+        box-shadow: 18px 0 50px rgba(0, 0, 0, 0.5);
+        transform: translateX(-103%); transition: transform 0.22s ease;
+        display: flex; flex-direction: column; padding: 18px;
       }
-
-      .main {
-        min-height: calc(100vh - 140px);
-        position: relative;
+      .sidebar.open { transform: translateX(0); }
+      .sb-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+      .sb-brand {
+        display: flex; align-items: baseline; gap: 10px;
+        color: var(--text-primary); text-decoration: none;
       }
-
-      .footer {
-        border-top: 1px solid var(--line);
-        color: var(--text-muted);
-        font-size: 11px;
-        margin-top: auto;
-        transition: border-color 0.4s ease;
+      .sb-brand .brand-name { font-size: 24px; }
+      .sb-close {
+        background: transparent; border: 1px solid var(--line-light); color: var(--text-muted);
+        border-radius: 8px; width: 30px; height: 30px; cursor: pointer;
       }
+      .sb-close:hover { color: var(--text-primary); border-color: var(--text-secondary); }
 
+      .sb-search { position: relative; margin-bottom: 12px; }
+      .sb-search input {
+        width: 100%; padding: 8px 12px 8px 32px;
+        background: var(--bg-primary); border: 1px solid var(--line);
+        border-radius: 999px; color: var(--text-primary);
+        font: inherit; font-size: 13px; outline: none;
+      }
+      .sb-search input:focus { border-color: var(--line-light); }
+      .sb-search .sb-search-icon {
+        position: absolute; left: 11px; top: 9px; color: var(--text-muted);
+        font-size: 13px; pointer-events: none;
+      }
+      .sb-results {
+        position: absolute; top: 40px; left: 0; right: 0; z-index: 50;
+        background: var(--bg-tertiary); border: 1px solid var(--line-light);
+        border-radius: 10px; overflow: hidden; max-height: 46vh; overflow-y: auto;
+      }
+      .sb-results a {
+        display: flex; flex-direction: column; gap: 1px; padding: 8px 12px;
+        color: var(--text-primary); text-decoration: none;
+      }
+      .sb-results a:hover { background: var(--bg-secondary); }
+      .sb-results .r-name { font-size: 13px; font-weight: 600; }
+      .sb-results .r-path { font-size: 11px; color: var(--text-muted); }
+      .sb-results .r-empty { padding: 12px; color: var(--text-muted); font-size: 12.5px; }
+
+      .sb-nav { display: flex; flex-direction: column; gap: 4px; }
+      .sb-nav a {
+        display: flex; flex-direction: column; gap: 1px; padding: 9px 12px;
+        border-radius: 10px; color: var(--text-primary); text-decoration: none;
+        border: 1px solid transparent;
+      }
+      .sb-nav a:hover { background: var(--bg-tertiary); }
+      .sb-nav a.active { background: var(--accent-soft); border-color: rgba(201, 162, 39, 0.35); }
+      .sb-nav a b { font-size: 14px; font-weight: 600; }
+      .sb-nav a.active b { color: var(--accent); }
+      .sb-nav a span { font-size: 11.5px; color: var(--text-muted); }
+
+      .sb-label {
+        font-family: var(--font-data); font-size: 9.5px; letter-spacing: 0.16em;
+        text-transform: uppercase; color: var(--text-muted);
+        margin: 16px 0 8px;
+      }
+      .sb-trunks { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+      .sb-trunks a {
+        display: flex; align-items: center; gap: 9px;
+        padding: 6px 10px; border-radius: 8px;
+        color: var(--text-secondary); text-decoration: none; font-size: 12.5px;
+      }
+      .sb-trunks a:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+      .sb-trunks i {
+        width: 8px; height: 8px; border-radius: 50%; flex: none;
+      }
+      .sb-foot {
+        margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+        color: var(--text-muted); font-size: 11px;
+        display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      }
+      .sb-foot button {
+        background: none; border: 1px solid var(--line-light); border-radius: 999px;
+        color: var(--text-muted); font-size: 10px; padding: 3px 10px; cursor: pointer;
+      }
+      .sb-foot button:hover { color: var(--text-primary); }
+
+      .footer { border-top: 1px solid var(--line); color: var(--text-muted); font-size: 11px; }
       .footer-inner {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 12px 32px;
-        padding: 28px 40px;
-        max-width: 1400px;
-        margin: 0 auto;
+        display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+        gap: 12px 32px; padding: 28px 40px; max-width: 1400px; margin: 0 auto;
       }
-
       .footer p { margin: 0; }
       .footer a { color: var(--text-secondary); }
 
-      /* The one place an eyebrow rule stays: it marks the section a title
-         belongs to, above the page title and nowhere else. */
+      /* shared typography */
       :global(.eyebrow) {
-        font-family: var(--font-data);
-        font-size: 10px;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 14px;
+        font-family: var(--font-data); font-size: 10px; letter-spacing: 0.2em;
+        text-transform: uppercase; color: var(--text-muted);
+        display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
       }
-
       :global(.eyebrow::before) {
-        content: "";
-        width: 20px;
-        height: 1px;
-        background: var(--accent);
+        content: ""; width: 20px; height: 1px; background: var(--accent);
       }
-
       :global(.page-title) {
-        font-family: var(--font-display);
-        font-size: clamp(30px, 4.5vw, 50px);
-        font-style: italic;
-        font-weight: 400;
-        color: var(--text-primary);
-        line-height: 1.1;
+        font-family: var(--font-display); font-size: clamp(30px, 4.5vw, 50px);
+        font-style: italic; font-weight: 400; line-height: 1.1;
       }
-
       :global(.page-subtitle) {
-        font-size: 14px;
-        line-height: 1.7;
-        color: var(--text-secondary);
-        max-width: 60ch;
+        font-size: 14px; line-height: 1.7; color: var(--text-secondary); max-width: 60ch;
       }
-
-      .search-bar {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        background: var(--bg-secondary);
-        border: 1px solid var(--line);
-        border-radius: 2px;
-        padding: 12px 16px;
-        max-width: 520px;
-        transition: border-color 0.3s ease, background-color 0.4s ease;
-      }
-
-      .search-bar:focus-within {
-        border-color: var(--accent);
-      }
-
-      .search-icon {
-        color: var(--text-muted);
-        font-size: 15px;
-      }
-
-      .search-bar input {
-        background: none;
-        border: none;
-        outline: none;
-        color: var(--text-primary);
-        font-family: var(--font-body);
-        font-size: 13px;
-        width: 100%;
-      }
-
-      .search-bar input::placeholder {
-        color: var(--text-muted);
-      }
-
-      /* Tabular numerals so counts align down a column of differing lengths. */
       :global(.num) {
-        font-family: var(--font-data);
-        font-variant-numeric: tabular-nums;
+        font-family: var(--font-data); font-variant-numeric: tabular-nums;
         font-feature-settings: 'tnum' 1;
       }
-
       :global(.sr-only) {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        white-space: nowrap;
-        border: 0;
+        position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+        clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -327,7 +288,54 @@ const navItems = [
       }
     </style>
   </head>
-  <body>
+  <body class={fullChrome ? 'chrome-full' : 'chrome-min'}>
+    {!fullChrome && (
+      <>
+      <button class="hamburger" id="hamburger" aria-label="Open menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+      <aside class="sidebar" id="sidebar" aria-label="Site navigation">
+        <div class="sb-head">
+          <a class="sb-brand" href={base}>
+            <span class="brand-name">Arbor.</span>
+          </a>
+          <button class="sb-close" id="sbClose" aria-label="Close menu">✕</button>
+        </div>
+
+        <div class="sb-search">
+          <span class="sb-search-icon">⌕</span>
+          <input id="sbSearch" type="search" placeholder="Search fields…" autocomplete="off" />
+          <div class="sb-results" id="sbResults" hidden></div>
+        </div>
+
+        <nav class="sb-nav">
+          {navItems.map(item => (
+            <a
+              href={item.href}
+              class={currentPage === item.key ? 'active' : ''}
+              aria-current={currentPage === item.key ? 'page' : undefined}
+            >
+              <b>{item.label}</b><span>{item.sub}</span>
+            </a>
+          ))}
+        </nav>
+
+        <p class="sb-label">Trunks</p>
+        <div class="sb-trunks">
+          {trunks.map(t => (
+            <a href={`${base}domains#${t.id}`}><i style={`background:${t.color};box-shadow:0 0 6px ${t.color}`}></i>{t.name}</a>
+          ))}
+        </div>
+
+        <div class="sb-foot">
+          <span>No accounts · saved in browser</span>
+          <button id="sbTheme" type="button">theme</button>
+        </div>
+      </aside>
+      </>
+    )}
+
     <header class="header">
       <div class="header-top">
         <div class="brand">
@@ -359,7 +367,7 @@ const navItems = [
 
     <footer class="footer">
       <div class="footer-inner">
-        <p>A field atlas of human knowledge, curated into eight trunks.</p>
+        <p id="footCount">A field atlas of human knowledge, curated into eight trunks.</p>
         <p>
           Structure from <a href="https://www.wikidata.org/">Wikidata</a>, CC0.
           <span id="buildStamp"></span>
@@ -369,34 +377,102 @@ const navItems = [
 
     <script>
       const root = document.documentElement;
-      const themeToggle = document.getElementById('themeToggle');
-
-      // Read the saved theme before first paint would matter; the attribute is
-      // set inline here rather than waiting for a module so there is no flash.
       const savedTheme = localStorage.getItem('arbor-theme') || 'dark';
       root.setAttribute('data-theme', savedTheme);
 
-      if (themeToggle) {
-        themeToggle.addEventListener('click', () => {
-          const current = root.getAttribute('data-theme');
-          const next = current === 'dark' ? 'light' : 'dark';
-          root.setAttribute('data-theme', next);
-          localStorage.setItem('arbor-theme', next);
-        });
+      function flipTheme() {
+        const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        localStorage.setItem('arbor-theme', next);
       }
+      document.getElementById('themeToggle')?.addEventListener('click', flipTheme);
+      document.getElementById('sbTheme')?.addEventListener('click', flipTheme);
 
-      // The node count and date are data, so they come from structure.json
-      // rather than being hand-written into the footer.
-      const stamp = document.getElementById('buildStamp');
-      const countLine = document.querySelector('.footer-inner p');
+      // Footer facts come from the artifact, not from hard-coded text.
       fetch(import.meta.env.BASE_URL + 'data/artifacts/structure.json')
         .then(r => (r.ok ? r.json() : null))
         .then(s => {
           if (!s) return;
-          if (countLine) countLine.textContent = `A field atlas of ${s.nodeCount.toLocaleString('en-US')} disciplines, curated into ${s.trunks.length} trunks.`;
-          if (stamp) stamp.textContent = `Built ${String(s.generatedAt).slice(0, 10)}.`;
+          const c = document.getElementById('footCount');
+          if (c) c.textContent = `A field atlas of ${s.nodeCount.toLocaleString('en-US')} disciplines, curated into ${s.trunks.length} trunks.`;
+          const stamp = document.getElementById('buildStamp');
+          if (stamp) stamp.textContent = ` Built ${String(s.generatedAt).slice(0, 10)}.`;
         })
-        .catch(() => { /* the footer line is optional; never block on it */ });
+        .catch(() => {});
+
+      // ---------- sidebar ----------
+      const sb = document.getElementById('sidebar');
+      const bk = document.getElementById('sidebarBackdrop');
+      const burger = document.getElementById('hamburger');
+      function openSidebar() {
+        if (!sb || !bk) return;
+        bk.hidden = false;
+        requestAnimationFrame(() => { sb.classList.add('open'); bk.classList.add('show'); });
+      }
+      function closeSidebar() {
+        if (!sb || !bk) return;
+        sb.classList.remove('open'); bk.classList.remove('show');
+        setTimeout(() => { bk.hidden = true; }, 220);
+      }
+      burger?.addEventListener('click', openSidebar);
+      document.getElementById('sbClose')?.addEventListener('click', closeSidebar);
+      bk?.addEventListener('click', closeSidebar);
+      sb?.addEventListener('click', e => { if ((e.target as HTMLElement).closest('a')) closeSidebar(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSidebar(); });
+
+      // ---------- sidebar search: names out of structure.json ----------
+      const searchInput = document.getElementById('sbSearch') as HTMLInputElement | null;
+      const searchOut = document.getElementById('sbResults');
+      let searchIndex: { name: string; kind: string; path: string; idx: number; color: string }[] | null = null;
+      let searchTimer: number | undefined;
+
+      async function ensureIndex() {
+        if (searchIndex) return searchIndex;
+        const res = await fetch(import.meta.env.BASE_URL + 'data/artifacts/structure.json');
+        if (!res.ok) return null;
+        const s = await res.json();
+        const parents = s.nodes.map((n: any) => n.parent);
+        const pathOf = (i: number) => {
+          const parts: string[] = [];
+          let p = parents[i];
+          let guard = 0;
+          while (p >= 0 && guard++ < 8) { parts.unshift(s.nodes[p].name); p = parents[p]; }
+          return parts.join(' · ');
+        };
+        searchIndex = s.nodes
+          .filter((n: any) => n.kind !== 'trunk')
+          .map((n: any, i: number) => ({
+            name: n.name, kind: n.kind, path: pathOf(i), idx: i,
+            color: s.trunks[n.trunk]?.color ?? '#c9a227',
+          }));
+        return searchIndex;
+      }
+
+      searchInput?.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        const q = searchInput.value.trim();
+        if (!searchOut) return;
+        if (q.length < 2) { searchOut.hidden = true; searchOut.innerHTML = ''; return; }
+        searchTimer = window.setTimeout(async () => {
+          const ix = await ensureIndex();
+          if (!ix) return;
+          const ql = q.toLowerCase();
+          const hits = ix.filter(x => x.name.toLowerCase().includes(ql))
+            .sort((a, b) => a.name.length - b.name.length)
+            .slice(0, 10);
+          searchOut!.innerHTML = hits.length
+            ? hits.map(h => `
+              <a href="${import.meta.env.BASE_URL}domains#n=${h.idx}">
+                <span class="r-name">${h.name}</span>
+                <span class="r-path">${h.kind} · ${h.path || 'atlas root'}</span>
+              </a>`).join('')
+            : `<div class="r-empty">No field matches “${q}”.</div>`;
+          searchOut!.hidden = false;
+        }, 160);
+      });
+      document.addEventListener('click', e => {
+        if (searchOut && !(e.target as HTMLElement).closest('.sb-search')) searchOut.hidden = true;
+      });
     </script>
   </body>
 </html>

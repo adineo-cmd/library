@@ -184,6 +184,12 @@ function main() {
     index,
   }));
 
+  // node index -> roadmap slug: lets the domains tree link straight into a
+  // field's roadmap from its notes drawer. Tiny, committed with the rest.
+  const links = {};
+  for (const e of index) links[e.node] = e.slug;
+  writeFileSync(resolve(OUT, 'roadmap-links.json'), JSON.stringify(links));
+
   // The route table for /roadmap/[slug] — tiny, imported at build time so
   // getStaticPaths can enumerate the pages without pulling the full artifact
   // into the build graph.

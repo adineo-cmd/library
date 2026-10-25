@@ -148,22 +148,13 @@
     const t = (time - t0) / 1000;
     const focus = selected >= 0 ? selected : hover;
 
-    // neighbourhood of the focus: same trunk + immediate family
+    // A click isolates ONE node: everything else leaves the frame, and the
+    // picked panel is where its relations are read — showing the whole
+    // neighbourhood here made the selection unreadable against 9k stars.
     let focusSet: Set<number> | null = null;
-    if (focus >= 0) {
-      focusSet = new Set([focus]);
-      const p = nodes[focus].parent;
-      if (p >= 0) focusSet.add(p);
-      for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i].parent === focus) focusSet.add(i);
-      }
-      for (const [a, b] of xlinks) {
-        if (a === focus) focusSet.add(b);
-        else if (b === focus) focusSet.add(a);
-      }
-    }
+    if (focus >= 0) focusSet = new Set([focus]);
 
-    if (linkDensity > 0.02) drawEdges(ctx, width, height);
+    if (linkDensity > 0.02 && !focusSet) drawEdges(ctx, width, height);
 
     // nodes: sprite blit per node, sized by field size
     const maxLog = Math.log(1 + Math.max(...nodes.map(n => n.size)));
@@ -178,23 +169,17 @@
       const r = rBase * Math.min(2.2, Math.max(0.55, scale / fitScale));
       const sprite = sprites[n.trunk];
       if (sprite) {
-        const s = r * 6;
-        ctx.globalAlpha = focusSet ? 0.95 : 0.8;
+        const s = r * (focusSet ? 10 : 6);
+        ctx.globalAlpha = focusSet ? 1 : 0.8;
         ctx.drawImage(sprite, x - s / 2, y - s / 2, s, s);
         ctx.globalAlpha = 1;
       }
       if (i === focus) {
         ctx.fillStyle = trunks[n.trunk]?.color ?? '#fff';
         ctx.beginPath();
-        ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
         ctx.fill();
       }
-    }
-
-    if (focus >= 0 && focusSet) {
-      // dim veil over everything outside the neighbourhood
-      ctx.fillStyle = 'rgba(10, 13, 12, 0.25)';
-      ctx.fillRect(0, 0, width, height);
     }
   };
 
@@ -242,6 +227,14 @@
     const i = nodeAt(e.clientX - r.left, e.clientY - r.top);
     selected = selected === i ? -1 : i;
   }
+  // names of the isolated node's crosslink neighbours, for the picked panel
+  $: relatedNames = selected >= 0
+    ? (xlinks.filter(([a, b]) => a === selected || b === selected)
+        .map(([a, b]) => (a === selected ? b : a))
+        .filter(i => enabled[nodes[i]?.trunk])
+        .map(i => nodes[i]?.name).filter(Boolean))
+    : [];
+
   function onWheel(e: WheelEvent) {
     e.preventDefault();
     const r = canvas.getBoundingClientRect();
@@ -365,13 +358,19 @@
         <div class="picked">
           <div>
             <strong>{nodes[selected].name}</strong>
-            <span class="num">{trunks[nodes[selected].trunk]?.name} · {nodes[selected].size.toLocaleString('en-US')} fields · depth {nodes[selected].kind === 'field' ? '—' : nodes[selected].kind}</span>
+            <span class="num">{trunks[nodes[selected].trunk]?.name} · {nodes[selected].size.toLocaleString('en-US')} fields</span>
+            {#if relatedNames.length}
+              <span class="picked__related">related: {relatedNames.slice(0, 4).join(' · ')}{relatedNames.length > 4 ? ` · +${relatedNames.length - 4}` : ''}</span>
+            {/if}
           </div>
-          <a
-            href={nodes[selected].wiki ? `https://en.wikipedia.org/wiki/${nodes[selected].wiki}` : `${BASE}domains`}
-            target={nodes[selected].wiki ? '_blank' : undefined}
-            rel="noopener noreferrer"
-          >{nodes[selected].wiki ? 'Wikipedia ↗' : 'explore ↗'}</a>
+          <div class="picked__actions">
+            <a
+              href={nodes[selected].wiki ? `https://en.wikipedia.org/wiki/${nodes[selected].wiki}` : `${BASE}domains#n=${selected}`}
+              target={nodes[selected].wiki ? '_blank' : undefined}
+              rel="noopener noreferrer"
+            >{nodes[selected].wiki ? 'Wikipedia ↗' : 'in tree ↗'}</a>
+            <button type="button" onclick={() => { selected = -1; }}>clear</button>
+          </div>
         </div>
       {/if}
     </div>
@@ -465,6 +464,13 @@
   .picked strong { display: block; font-size: 13.5px; color: var(--text-primary); }
   .picked span { font-size: 10.5px; color: var(--text-muted); }
   .picked a { font-size: 11.5px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .picked__related { display: block; font-size: 10.5px; color: var(--text-muted); max-width: 46ch; margin-top: 3px; }
+  .picked__actions { display: flex; align-items: center; gap: 10px; }
+  .picked__actions button {
+    background: none; border: 1px solid var(--line); border-radius: 999px;
+    color: var(--text-muted); font-size: 10.5px; padding: 4px 10px; cursor: pointer;
+  }
+  .picked__actions button:hover { color: var(--text-secondary); }
 
   @media (max-width: 860px) {
     .constellation { grid-template-columns: 1fr; }
