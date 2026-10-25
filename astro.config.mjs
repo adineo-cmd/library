@@ -13,9 +13,9 @@ export default defineConfig({
       tailwindcss() // Tailwind v4 Vite plugin
     ]
   },
-  // If you are deploying to GitHub Pages under a repo name (e.g., github.com/username/memex),
-  // uncomment the line below and change 'memex' to your repo name.
-  // base: '/memex/',
+  // The site is served from https://adineo-cmd.github.io/memex/, so every
+  // asset and page URL is emitted under this base.
+  base: '/memex/',
   
   // Optimize for mobile and fast builds
   build: {

@@ -10,6 +10,8 @@
    */
   import { onMount } from 'svelte';
 
+  const BASE = import.meta.env.BASE_URL;
+
   interface Node {
     index: number; id: string; name: string; description: string | null;
     wiki: string | null; parent: number; trunk: number; kind: string; size: number;
@@ -88,7 +90,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch('/data/artifacts/structure.json');
+      const res = await fetch(`${BASE}data/artifacts/structure.json`);
       if (!res.ok) throw new Error(`structure.json responded ${res.status}`);
       const s = await res.json();
       nodes = s.nodes.map((n: any, index: number) => ({ ...n, index }));
@@ -219,7 +221,7 @@
                       <ol class="steps">
                         {#each subs as s, si (s)}
                           <li class="step">
-                            <a class="step__num num" href={`/roadmap#${nodes[s].id}`}>{String(si + 1).padStart(2, '0')}</a>
+                            <a class="step__num num" href={`${BASE}roadmap#${nodes[s].id}`}>{String(si + 1).padStart(2, '0')}</a>
                             <div>
                               <p class="step__name">{nodes[s].name}</p>
                               {#if fieldsOf(s).length}

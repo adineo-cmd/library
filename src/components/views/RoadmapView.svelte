@@ -13,6 +13,8 @@
    */
   import { onMount } from 'svelte';
 
+  const BASE = import.meta.env.BASE_URL;
+
   interface RNode {
     id: string; label: string; level: number; x: number; y: number;
     kind: 'primary' | 'optional'; desc: string | null; wiki: string | null; size: number;
@@ -81,7 +83,9 @@
     : 0;
 
   onMount(() => {
-    slug = location.pathname.split('/').filter(Boolean).pop() ?? '';
+    const parts = location.pathname.split('/').filter(Boolean);
+    // ['memex','roadmap','physics'] on Pages, ['roadmap','physics'] locally
+    slug = (parts[0] === 'memex' ? parts[2] : parts[1]) ?? '';
     try {
       done = new Set(JSON.parse(localStorage.getItem(storageKey(slug)) ?? '[]'));
     } catch { done = new Set(); }
@@ -90,8 +94,8 @@
   onMount(async () => {
     try {
       const [rRes, sRes] = await Promise.all([
-        fetch('/data/artifacts/roadmaps.json'),
-        fetch('/data/artifacts/structure.json'),
+        fetch(`${BASE}data/artifacts/roadmaps.json`),
+        fetch(`${BASE}data/artifacts/structure.json`),
       ]);
       if (!rRes.ok || !sRes.ok) throw new Error('artifact fetch failed');
       const r = await rRes.json();
@@ -146,12 +150,12 @@
     <div class="state state--error" role="alert">
       <p>This roadmap could not be drawn.</p>
       <p class="state__detail">{error}</p>
-      <p class="state__hint"><a href="/roadmap">← back to all roadmaps</a></p>
+      <p class="state__hint"><a href={`${BASE}roadmap`}>← back to all roadmaps</a></p>
     </div>
   {:else if roadmap}
     <header class="head">
       <p class="head__crumb">
-        <a href="/roadmap">Roadmaps</a>
+        <a href={`${BASE}roadmap`}>Roadmaps</a>
         {#if trunk}<span class="head__sep">/</span><span style={`color:${trunkColor}`}>{trunk.name}</span>{/if}
       </p>
       <h1 class="head__title">{structureNodes[roadmap.node]?.name ?? 'Roadmap'}</h1>

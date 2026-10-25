@@ -9,6 +9,8 @@
    */
   import { onMount } from 'svelte';
 
+  const BASE = import.meta.env.BASE_URL;
+
   interface Entry {
     slug: string; title: string; node: number; kind: string;
     trunk: number; trunkName: string; steps: number; depth: number;
@@ -44,8 +46,8 @@
   onMount(async () => {
     try {
       const [rRes, sRes] = await Promise.all([
-        fetch('/data/artifacts/roadmaps.json'),
-        fetch('/data/artifacts/structure.json'),
+        fetch(`${BASE}data/artifacts/roadmaps.json`),
+        fetch(`${BASE}data/artifacts/structure.json`),
       ]);
       if (!rRes.ok || !sRes.ok) throw new Error('artifact fetch failed');
       const r = await rRes.json();
@@ -110,7 +112,7 @@
               class="card"
               class:card--hl={hi === highlight}
               id={`rm-${hi}`}
-              href={`/roadmap/${e.slug}`}
+              href={`${BASE}roadmap/${e.slug}`}
             >
               <span class="card__kind">{e.kind === 'trunk' ? 'grand tour' : e.kind}</span>
               <h3 class="card__title">{e.title}</h3>

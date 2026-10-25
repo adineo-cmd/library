@@ -10,6 +10,10 @@
    */
   import { onMount } from 'svelte';
 
+  // BASE_URL is '/' in dev and '/memex/' on Pages — every fetch and in-site
+  // link must go through it or the deployed site 404s.
+  const BASE = import.meta.env.BASE_URL;
+
   interface Trunk {
     id: string; name: string; num: string; color: string;
     fieldCount: number; domainCount: number;
@@ -40,7 +44,7 @@
 
   onMount(async () => {
     try {
-      const res = await fetch('/data/artifacts/structure.json');
+      const res = await fetch(`${BASE}data/artifacts/structure.json`);
       if (!res.ok) throw new Error(`structure.json responded ${res.status}`);
       const s = await res.json();
       const fieldCount = new Array(s.trunks.length).fill(0);
@@ -110,7 +114,7 @@
           onmouseleave={() => (hover = null)}
         >
           <circle cx={LABEL_X} cy={y} r={active ? 7 : 5} fill={t.color} />
-          <a href={`/domains#${t.id}`}>
+          <a href={`${BASE}domains#${t.id}`}>
             <text class="trunk-name" x={LABEL_X + 16} y={y + 4} fill={active ? t.color : 'var(--text-primary)'}>
               {t.name}
             </text>

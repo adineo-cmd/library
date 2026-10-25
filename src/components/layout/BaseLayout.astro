@@ -6,12 +6,13 @@ interface Props {
 }
 
 const { title, description = '', currentPage = 'home' } = Astro.props;
+const base = import.meta.env.BASE_URL;
 
 const navItems = [
-  { key: 'home', label: 'Home', href: '/' },
-  { key: 'domains', label: 'Domains', href: '/domains' },
-  { key: 'roadmap', label: 'Roadmap', href: '/roadmap' },
-  { key: 'graph', label: 'Graph View', href: '/graph' },
+  { key: 'home', label: 'Home', href: base },
+  { key: 'domains', label: 'Domains', href: `${base}domains` },
+  { key: 'roadmap', label: 'Roadmap', href: `${base}roadmap` },
+  { key: 'graph', label: 'Graph View', href: `${base}graph` },
 ];
 ---
 
@@ -388,7 +389,7 @@ const navItems = [
       // rather than being hand-written into the footer.
       const stamp = document.getElementById('buildStamp');
       const countLine = document.querySelector('.footer-inner p');
-      fetch('/data/artifacts/structure.json')
+      fetch(import.meta.env.BASE_URL + 'data/artifacts/structure.json')
         .then(r => (r.ok ? r.json() : null))
         .then(s => {
           if (!s) return;
