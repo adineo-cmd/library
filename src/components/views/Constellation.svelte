@@ -16,6 +16,8 @@
    */
   import { onMount, tick } from 'svelte';
 
+  const BASE = import.meta.env.BASE_URL;
+
   interface Trunk { id: string; name: string; num: string; color: string }
   interface SNode {
     name: string; kind: string; trunk: number; parent: number; size: number;
@@ -264,8 +266,8 @@
   onMount(async () => {
     try {
       const [sRes, lRes] = await Promise.all([
-        fetch('/data/artifacts/structure.json'),
-        fetch('/data/artifacts/taxonomy-layout.bin'),
+        fetch(`${BASE}data/artifacts/structure.json`),
+        fetch(`${BASE}data/artifacts/taxonomy-layout.bin`),
       ]);
       if (!sRes.ok || !lRes.ok) throw new Error('artifact fetch failed');
       const s = await sRes.json();
@@ -366,7 +368,7 @@
             <span class="num">{trunks[nodes[selected].trunk]?.name} · {nodes[selected].size.toLocaleString('en-US')} fields · depth {nodes[selected].kind === 'field' ? '—' : nodes[selected].kind}</span>
           </div>
           <a
-            href={nodes[selected].wiki ? `https://en.wikipedia.org/wiki/${nodes[selected].wiki}` : '/domains'}
+            href={nodes[selected].wiki ? `https://en.wikipedia.org/wiki/${nodes[selected].wiki}` : `${BASE}domains`}
             target={nodes[selected].wiki ? '_blank' : undefined}
             rel="noopener noreferrer"
           >{nodes[selected].wiki ? 'Wikipedia ↗' : 'explore ↗'}</a>
