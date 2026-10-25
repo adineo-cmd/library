@@ -130,6 +130,20 @@ export const MAINTENANCE_PATTERNS = [
   '^GFDL (files|copyright templates)', // 3 rows, 43,789 pages
   '^(SVG images of |Film posters for |User-created public domain files$|Album covers$|Self-published work$|Taxonomy templates$|Deprecated archive template)', // 56 rows, 669,575 pages
   '^(Non-free rationale|Completed non-free use rationale) ', // 2 rows, 243,019 pages
+
+  // --- Meta-classification holders -----------------------------------------------
+  // Families that hold *categories* rather than subjects. These owned the top
+  // of the previous 30,000-node cut: `Category table of contents tracking`
+  // alone was the assigned primary parent of 15,004 of the 30,039 emitted
+  // nodes, because once it attracts children its subtree is the largest and
+  // the primary-parent rule (§5.3) attracts more. Removing the hub at pass 1,
+  // before any parent is chosen, is what breaks that feedback loop.
+  '^Category table of contents', // 3 rows; `Category table of contents tracking` reaches 7,363,299 pages
+  '^Categories requiring', // 2 rows; `Categories requiring diffusion` is the diffusion backlog
+  '^Categories with ', // 347 rows; hatnote/template audit buckets
+  '^Categories which', // 12 rows; `Categories which are included in the JEL classification codes`
+  '^Categories by ', // 214 rows; `Categories by continent` holds the continent root categories
+  ' category navigation', // 89 rows; `France by region category navigation with 6–15 grey links`
 ];
 
 const COMPILED = MAINTENANCE_PATTERNS.map(p => new RegExp(p, 'i'));

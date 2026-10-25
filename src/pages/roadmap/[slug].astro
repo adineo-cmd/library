@@ -1,0 +1,22 @@
+---
+import BaseLayout from '../../components/layout/BaseLayout.astro';
+import RoadmapView from '../../components/views/RoadmapView.svelte';
+import slugs from '../../data/roadmap-slugs.json';
+
+export function getStaticPaths() {
+  return slugs.map((entry) => ({
+    params: { slug: entry.slug },
+    props: { title: entry.title },
+  }));
+}
+
+const { title } = Astro.props;
+---
+
+<BaseLayout
+  title={title}
+  description={`A step-by-step learning roadmap for ${title}.`}
+  currentPage="roadmap"
+>
+  <RoadmapView client:only="svelte" />
+</BaseLayout>

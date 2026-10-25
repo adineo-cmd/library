@@ -243,6 +243,14 @@ describe('MAINTENANCE_PATTERNS', () => {
     'GFDL files',
     'Album covers',
     'Completed non-free use rationale logo transclusions',
+    // Meta-classification holders — the families that owned the top of the
+    // previous cut as assigned primary parents.
+    'Category table of contents tracking',
+    'Categories requiring diffusion',
+    'Categories with hatnote templates targeting a non-existent page',
+    'Categories which are included in the JEL classification codes',
+    'Categories by continent',
+    'France by region category navigation with 6–15 grey links',
   ];
 
   it('is the auditable list reported on /method', () => {

@@ -1,31 +1,24 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
-import GlobalGraph from '../components/views/GlobalGraph.svelte';
-
-// Positions are precomputed by scripts/layout.mjs and shipped in layout.bin, so
-// the browser draws the same map on every visit rather than running a force
-// simulation. The component fetches the artifacts itself.
+import Constellation from '../components/views/Constellation.svelte';
 ---
 
 <BaseLayout
-  title="Graph"
-  description="The whole atlas at once: 30,039 Wikipedia categories plotted by how their subtrees relate."
+  title="Graph View"
+  description="The whole atlas as a drifting constellation — every field a star, every relation a thread."
   currentPage="graph"
 >
   <div class="page">
     <header class="intro">
-      <p class="eyebrow">Graph</p>
-      <h1 class="page-title">The whole atlas at once</h1>
+      <p class="eyebrow">Constellation</p>
+      <h1 class="page-title">The whole atlas, drifting</h1>
       <p class="page-subtitle">
-        Every category is a point. Fine threads are the tree a category sits in;
-        heavier ones join categories that share articles but belong to different
-        branches. Click a point to see what it touches.
+        Every field a star, every link a thread of thought. Clusters glow by
+        trunk; drag, zoom, and click a star to isolate its neighbourhood.
       </p>
     </header>
 
-    <div class="canvas-wrap">
-      <GlobalGraph client:only="svelte" />
-    </div>
+    <Constellation client:only="svelte" />
   </div>
 </BaseLayout>
 
@@ -33,18 +26,10 @@ import GlobalGraph from '../components/views/GlobalGraph.svelte';
   .page {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 60px 40px 80px;
+    padding: 56px 40px 72px;
   }
 
-  .intro { margin-bottom: 28px; }
-
-  .canvas-wrap {
-    height: 68vh;
-    min-height: 520px;
-  }
-
-  @media (max-width: 900px) {
-    .page { padding: 40px 20px 56px; }
-    .canvas-wrap { height: 60vh; }
+  @media (max-width: 768px) {
+    .page { padding: 36px 20px 56px; }
   }
 </style>

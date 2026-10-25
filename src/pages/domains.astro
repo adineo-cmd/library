@@ -1,0 +1,35 @@
+---
+import BaseLayout from '../components/layout/BaseLayout.astro';
+import DomainsMap from '../components/views/DomainsMap.svelte';
+---
+
+<BaseLayout
+  title="Domains"
+  description="Every field branches from one curiosity — pick a trunk and the atlas fans out."
+  currentPage="domains"
+>
+  <div class="page">
+    <header class="intro">
+      <p class="eyebrow">Root System</p>
+      <h1 class="page-title">Every field branches from one curiosity</h1>
+      <p class="page-subtitle">
+        Pick a trunk — the atlas fans out into the domains, subdomains, and
+        adjacent disciplines waiting to be explored.
+      </p>
+    </header>
+
+    <DomainsMap client:only="svelte" />
+  </div>
+</BaseLayout>
+
+<style>
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 56px 40px 72px;
+  }
+
+  @media (max-width: 768px) {
+    .page { padding: 36px 20px 56px; }
+  }
+</style>

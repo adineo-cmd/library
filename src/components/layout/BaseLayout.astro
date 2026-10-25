@@ -8,10 +8,10 @@ interface Props {
 const { title, description = '', currentPage = 'home' } = Astro.props;
 
 const navItems = [
-  { key: 'home', label: 'Browse', href: '/' },
-  { key: 'domains', label: 'Domains', href: '/domains' },
-  { key: 'roadmap', label: 'Roadmap', href: '/roadmap' },
-  { key: 'graph', label: 'Graph', href: '/graph' },
+  { key: 'home', num: '00', label: 'Home', href: '/' },
+  { key: 'domains', num: '01', label: 'Domains', href: '/domains' },
+  { key: 'roadmap', num: '02', label: 'Roadmap', href: '/roadmap' },
+  { key: 'graph', num: '03', label: 'Graph View', href: '/graph' },
 ];
 ---
 
@@ -105,7 +105,8 @@ const navItems = [
         font-family: var(--font-display);
         font-size: 30px;
         font-weight: 600;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
         color: var(--text-primary);
       }
 
@@ -153,25 +154,35 @@ const navItems = [
 
       .nav {
         display: flex;
+        justify-content: center;
         padding: 0 40px;
       }
 
-      /* Sentence case, hairline underline for the current page. No numbering:
-         these are not steps in a sequence, so numbering would encode a
-         relationship that does not exist. */
+      /* Numbered steps, pill for the current page — the atlas reads as a
+         sequence of views, so the numbering encodes that and the pill marks
+         where the reader stands. */
       .nav-list {
         display: flex;
-        gap: 28px;
+        gap: 10px;
         list-style: none;
       }
 
       .nav-link {
-        position: relative;
-        font-size: 13px;
+        display: inline-block;
+        font-family: var(--font-data);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
         color: var(--text-muted);
-        padding: 0 0 12px;
+        padding: 9px 18px;
+        border-radius: 999px;
         text-decoration: none;
-        transition: color 0.2s ease;
+        transition: color 0.2s ease, background-color 0.25s ease;
+      }
+
+      .nav-link .nav-num {
+        margin-right: 6px;
+        opacity: 0.7;
       }
 
       .nav-link:hover {
@@ -180,21 +191,16 @@ const navItems = [
 
       .nav-link:focus-visible {
         outline: 2px solid var(--accent);
-        outline-offset: 4px;
-        border-radius: 2px;
+        outline-offset: 2px;
       }
 
       .nav-link.active {
-        color: var(--text-primary);
+        color: #14100a;
+        background: var(--accent);
       }
 
-      .nav-link.active::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: 1px;
+      html[data-theme="light"] .nav-link.active {
+        color: #fdfbf4;
         background: var(--accent);
       }
 
@@ -227,7 +233,7 @@ const navItems = [
 
       /* The one place an eyebrow rule stays: it marks the section a title
          belongs to, above the page title and nowhere else. */
-      .eyebrow {
+      :global(.eyebrow) {
         font-family: var(--font-data);
         font-size: 10px;
         letter-spacing: 0.2em;
@@ -239,14 +245,14 @@ const navItems = [
         margin-bottom: 14px;
       }
 
-      .eyebrow::before {
+      :global(.eyebrow::before) {
         content: "";
         width: 20px;
         height: 1px;
         background: var(--accent);
       }
 
-      .page-title {
+      :global(.page-title) {
         font-family: var(--font-display);
         font-size: clamp(30px, 4.5vw, 50px);
         font-style: italic;
@@ -255,7 +261,7 @@ const navItems = [
         line-height: 1.1;
       }
 
-      .page-subtitle {
+      :global(.page-subtitle) {
         font-size: 14px;
         line-height: 1.7;
         color: var(--text-secondary);
@@ -298,13 +304,13 @@ const navItems = [
       }
 
       /* Tabular numerals so counts align down a column of differing lengths. */
-      .num {
+      :global(.num) {
         font-family: var(--font-data);
         font-variant-numeric: tabular-nums;
         font-feature-settings: 'tnum' 1;
       }
 
-      .sr-only {
+      :global(.sr-only) {
         position: absolute;
         width: 1px;
         height: 1px;
@@ -329,8 +335,8 @@ const navItems = [
     <header class="header">
       <div class="header-top">
         <div class="brand">
-          <span class="brand-name">Arbor</span>
-          <span class="brand-tagline">A field atlas of Wikipedia</span>
+          <span class="brand-name">Arbor.</span>
+          <span class="brand-tagline">A field atlas for wandering minds</span>
         </div>
         <button class="theme-toggle" id="themeToggle" aria-label="Toggle light and dark"></button>
       </div>
@@ -338,12 +344,12 @@ const navItems = [
         <ul class="nav-list">
           {navItems.map(item => (
             <li>
-              <a 
-                href={item.href} 
+              <a
+                href={item.href}
                 class={`nav-link ${currentPage === item.key ? 'active' : ''}`}
                 aria-current={currentPage === item.key ? 'page' : undefined}
               >
-                {item.label}
+                <span class="nav-num">{item.num}</span>{item.label}
               </a>
             </li>
           ))}
@@ -357,9 +363,9 @@ const navItems = [
 
     <footer class="footer">
       <div class="footer-inner">
-        <p>Built from the English Wikipedia category dump.</p>
+        <p>A field atlas of human knowledge, curated into eight trunks.</p>
         <p>
-          Data from <a href="https://dumps.wikimedia.org/">Wikimedia dumps</a>, CC BY-SA.
+          Structure from <a href="https://www.wikidata.org/">Wikidata</a>, CC0.
           <span id="buildStamp"></span>
         </p>
       </div>
@@ -383,19 +389,18 @@ const navItems = [
         });
       }
 
-      // The dump date is data, so it comes from meta.json rather than being
-      // hand-written into the footer.
+      // The node count and date are data, so they come from structure.json
+      // rather than being hand-written into the footer.
       const stamp = document.getElementById('buildStamp');
-      if (stamp) {
-        fetch('/data/artifacts/meta.json')
-          .then(r => (r.ok ? r.json() : null))
-          .then(meta => {
-            if (!meta) return;
-            const when = meta.dumpDate || meta.generatedAt;
-            if (when) stamp.textContent = `Dump ${String(when).slice(0, 10)}.`;
-          })
-          .catch(() => { /* the footer line is optional; never block on it */ });
-      }
+      const countLine = document.querySelector('.footer-inner p');
+      fetch('/data/artifacts/structure.json')
+        .then(r => (r.ok ? r.json() : null))
+        .then(s => {
+          if (!s) return;
+          if (countLine) countLine.textContent = `A field atlas of ${s.nodeCount.toLocaleString('en-US')} disciplines, curated into ${s.trunks.length} trunks.`;
+          if (stamp) stamp.textContent = `Built ${String(s.generatedAt).slice(0, 10)}.`;
+        })
+        .catch(() => { /* the footer line is optional; never block on it */ });
     </script>
   </body>
 </html>
