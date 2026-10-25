@@ -1,28 +1,24 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
-import DomainTree from '../components/views/DomainTree.svelte';
-
-// The component fetches concepts.json itself. Passing 30,039 nodes through
-// Astro's island serialiser would inline ~3.7MB of JSON into the HTML on every
-// page load, before the client could fetch it once and cache it.
+import HomeFan from '../components/views/HomeFan.svelte';
 ---
 
 <BaseLayout
-  title="Browse"
-  description="An atlas of 30,039 Wikipedia categories, arranged as a browsable tree."
+  title="Home"
+  description="An atlas of 9,261 human knowledge disciplines, arranged as eight trunks you can wander."
   currentPage="home"
 >
   <div class="page">
     <header class="intro">
-      <p class="eyebrow">Browse</p>
+      <p class="eyebrow">Atlas Root</p>
       <h1 class="page-title">Where would you like to wander?</h1>
       <p class="page-subtitle">
-        Every category on this atlas sits inside a larger one. Open a branch and
-        follow it down, or search for a name you already have in mind.
+        These are the main trunks of the atlas — every domain, subdomain, and
+        roadmap below grows out from one of these.
       </p>
     </header>
 
-    <DomainTree client:only="svelte" />
+    <HomeFan client:only="svelte" />
   </div>
 </BaseLayout>
 
@@ -30,12 +26,15 @@ import DomainTree from '../components/views/DomainTree.svelte';
   .page {
     max-width: 1180px;
     margin: 0 auto;
-    padding: 72px 40px 96px;
+    padding: 56px 40px 72px;
   }
 
-  .intro { margin-bottom: 8px; }
+  .intro {
+    max-width: 720px;
+    margin-bottom: 8px;
+  }
 
   @media (max-width: 768px) {
-    .page { padding: 44px 20px 64px; }
+    .page { padding: 36px 20px 56px; }
   }
 </style>
