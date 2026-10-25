@@ -8,10 +8,10 @@ interface Props {
 const { title, description = '', currentPage = 'home' } = Astro.props;
 
 const navItems = [
-  { key: 'home', num: '00', label: 'Home', href: '/' },
-  { key: 'domains', num: '01', label: 'Domains', href: '/domains' },
-  { key: 'roadmap', num: '02', label: 'Roadmap', href: '/roadmap' },
-  { key: 'graph', num: '03', label: 'Graph View', href: '/graph' },
+  { key: 'home', label: 'Home', href: '/' },
+  { key: 'domains', label: 'Domains', href: '/domains' },
+  { key: 'roadmap', label: 'Roadmap', href: '/roadmap' },
+  { key: 'graph', label: 'Graph View', href: '/graph' },
 ];
 ---
 
@@ -180,11 +180,6 @@ const navItems = [
         transition: color 0.2s ease, background-color 0.25s ease;
       }
 
-      .nav-link .nav-num {
-        margin-right: 6px;
-        opacity: 0.7;
-      }
-
       .nav-link:hover {
         color: var(--text-secondary);
       }
@@ -349,7 +344,7 @@ const navItems = [
                 class={`nav-link ${currentPage === item.key ? 'active' : ''}`}
                 aria-current={currentPage === item.key ? 'page' : undefined}
               >
-                <span class="nav-num">{item.num}</span>{item.label}
+                {item.label}
               </a>
             </li>
           ))}

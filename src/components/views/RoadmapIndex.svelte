@@ -100,7 +100,6 @@
       {@const t = trunks[group.trunk]}
       <section class="group" id={t?.id} style={`--trunk:${t?.color ?? 'var(--accent)'}`}>
         <header class="group__head">
-          <span class="group__num num">{t?.num}</span>
           <h2 class="group__name">{t?.name ?? 'Interdisciplinary'}</h2>
           <span class="group__count num">{group.items.length}</span>
         </header>
@@ -161,7 +160,6 @@
     border-bottom: 1px solid var(--line);
     padding-bottom: 10px; margin-bottom: 18px;
   }
-  .group__num { font-size: 13px; color: var(--trunk); }
   .group__name {
     font-family: var(--font-display); font-size: 26px; font-weight: 500;
     color: var(--text-primary);

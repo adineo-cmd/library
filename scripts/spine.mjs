@@ -15,7 +15,7 @@
  */
 export const SPINE = [
   {
-    id: 'sciences', name: 'Sciences', num: '01', color: '#7ee0a3',
+    id: 'sciences', name: 'Sciences', color: '#7ee0a3',
     blurb: 'The natural and physical world, from quarks to ecosystems.',
     domains: [
       { id: 'physics', name: 'Physics', blurb: 'Matter, motion, energy and the forces between them.',
@@ -104,7 +104,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'formal', name: 'Mathematics & Logic', num: '02', color: '#9db8ff',
+    id: 'formal', name: 'Mathematics & Logic', color: '#9db8ff',
     blurb: 'Formal systems: number, shape, chance and proof.',
     domains: [
       { id: 'mathematics', name: 'Mathematics', blurb: 'Quantity, structure, space and change.',
@@ -152,7 +152,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'technology', name: 'Technology & Computing', num: '03', color: '#ffb86b',
+    id: 'technology', name: 'Technology & Computing', color: '#ffb86b',
     blurb: 'Building with bits, steel, chemicals and flight.',
     domains: [
       { id: 'computer-science', name: 'Computer Science', blurb: 'Computation itself: algorithms, languages and machines.',
@@ -273,7 +273,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'humanities', name: 'Humanities', num: '04', color: '#e0a9ff',
+    id: 'humanities', name: 'Humanities', color: '#e0a9ff',
     blurb: 'Meaning, memory and the human record.',
     domains: [
       { id: 'philosophy', name: 'Philosophy', blurb: 'The disciplined examination of existence, knowledge and value.',
@@ -361,7 +361,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'social', name: 'Social Sciences', num: '05', color: '#ffd97a',
+    id: 'social', name: 'Social Sciences', color: '#ffd97a',
     blurb: 'People in aggregates: minds, markets, institutions and societies.',
     domains: [
       { id: 'psychology', name: 'Psychology', blurb: 'Mind and behaviour, studied scientifically.',
@@ -467,7 +467,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'arts', name: 'Arts & Culture', num: '06', color: '#ff9e9e',
+    id: 'arts', name: 'Arts & Culture', color: '#ff9e9e',
     blurb: 'Making: images, sound, performance, objects and spaces.',
     domains: [
       { id: 'visual-arts', name: 'Visual Arts', blurb: 'Image and object making, from pencil to pixel.',
@@ -546,7 +546,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'health', name: 'Health & Medicine', num: '07', color: '#8ce3e0',
+    id: 'health', name: 'Health & Medicine', color: '#8ce3e0',
     blurb: 'The body in health and disease — and the systems that care for it.',
     domains: [
       { id: 'medicine', name: 'Medicine', blurb: 'Diagnosis, treatment and prevention of disease.',
@@ -637,7 +637,7 @@ export const SPINE = [
     ],
   },
   {
-    id: 'law', name: 'Law & Governance', num: '08', color: '#c2f28a',
+    id: 'law', name: 'Law & Governance', color: '#c2f28a',
     blurb: 'Rules, rights and the institutions that uphold them.',
     domains: [
       { id: 'legal-theory', name: 'Legal Theory', blurb: 'What law is, and why it binds.',
@@ -728,6 +728,6 @@ export const SPINE = [
 
 /** The safety-net trunk for disciplines no keyword reaches. */
 export const GENERAL_TRUNK = {
-  id: 'general', name: 'Interdisciplinary', num: '09', color: '#b9c2bd',
+  id: 'general', name: 'Interdisciplinary', color: '#b9c2bd',
   blurb: 'Fields that cross the boundaries — and those still waiting for a home.',
 };

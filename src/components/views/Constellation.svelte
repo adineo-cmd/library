@@ -330,7 +330,6 @@
               title="click to toggle · double-click to solo"
             >
               <i class="cluster__dot"></i>{t.name}
-              <span class="cluster__num num">{t.num}</span>
             </button>
           </li>
         {/each}
@@ -417,7 +416,6 @@
     width: 9px; height: 9px; border-radius: 50%; background: var(--trunk);
     box-shadow: 0 0 8px var(--trunk);
   }
-  .cluster__num { margin-left: auto; font-size: 9.5px; color: var(--text-muted); }
   .showall {
     width: 100%; margin-top: 8px;
     background: none; border: 1px solid var(--line); border-radius: 6px;

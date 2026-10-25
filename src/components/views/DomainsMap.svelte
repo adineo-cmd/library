@@ -49,7 +49,7 @@
     const rows: { node: number; label: string; trunk: number }[] = [];
     trunks.forEach((t, ti) => {
       for (const d of domainsOfTrunk(ti)) {
-        rows.push({ node: d, label: `${t.num}-${String(rows.length + 1).padStart(2, '0')}  ${nodes[d].name}`, trunk: ti });
+        rows.push({ node: d, label: nodes[d].name, trunk: ti });
       }
     });
     const yOf = (i: number) => TOP + ((H - TOP * 2) * i) / Math.max(1, rows.length - 1);
@@ -59,11 +59,11 @@
         ? idxs.reduce((s, x) => s + yOf(x.i), 0) / idxs.length
         : H / 2;
       return {
-        id: t.id, num: t.num, name: t.name, color: t.color,
+        id: t.id, name: t.name, color: t.color,
         x: 330, y,
         domains: idxs.map((x, di) => ({
           node: x.r.node, x: 640, y: yOf(x.i),
-          label: `${t.num}-${String(di + 1).padStart(2, '0')} ${nodes[x.r.node].name}`,
+          label: nodes[x.r.node].name,
         })),
       };
     });
@@ -175,7 +175,7 @@
             {/each}
             <a href={`#${T.id}`}>
               <circle cx={T.x} cy={T.y} r="5.5" fill={T.color} />
-              <text class="fan-trunk" x={T.x + 12} y={T.y + 4}>{T.num} {T.name}</text>
+              <text class="fan-trunk" x={T.x + 12} y={T.y + 4}>{T.name}</text>
             </a>
           {/each}
           <circle cx="110" cy={layout.rootY} r="9" fill="#e8b76a" />
@@ -188,7 +188,6 @@
       {#each trunks as t, ti (t.id)}
         <section class="trunk-sec" id={t.id} style={`--trunk:${t.color}`}>
           <header class="trunk-sec__head">
-            <span class="trunk-sec__num num">{t.num}</span>
             <h2 class="trunk-sec__name">{t.name}</h2>
             <span class="trunk-sec__meta num">{fmt(domainsOfTrunk(ti).length)} domains</span>
           </header>
@@ -328,9 +327,6 @@
     display: flex; align-items: baseline; gap: 14px;
     border-bottom: 1px solid var(--line);
     padding-bottom: 12px; margin-bottom: 8px;
-  }
-  .trunk-sec__num {
-    font-size: 13px; color: var(--trunk);
   }
   .trunk-sec__name {
     font-family: var(--font-display); font-size: 30px; font-weight: 500;
