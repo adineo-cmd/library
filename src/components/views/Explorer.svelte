@@ -21,6 +21,16 @@
 
   const BASE = import.meta.env.BASE_URL;
   const CAP = 28;               // children shown before the "+ N more" node
+  const LEVEL_NAMES = ['Foundations', 'Core', 'Advanced', 'Specialisations', 'Frontiers', 'Further'];
+
+  interface RoadmapNode {
+    id: string; label: string; level: number; kind: 'primary' | 'optional';
+    desc: string | null; wiki: string | null; size: number;
+  }
+  interface Roadmap {
+    slug: string; node: number; levelCount: number;
+    nodes: RoadmapNode[]; edges: [number, number][];
+  }
   const LEVELS = ['Foundations', 'Core', 'Advanced', 'Specialisations', 'Frontiers', 'Further'];
 
   let status: 'loading' | 'ready' | 'error' = 'loading';
@@ -38,6 +48,33 @@
 
   let drawerNode = -1;
   let drawerOpen = false;
+
+  // ---------- sliced-in roadmap ----------
+  // Clicking a domain/subdomain/field that has a roadmap opens that roadmap
+  // IN PLACE — the same dendrogram the roadmap section draws — instead of
+  // navigating away. Trunks keep the explorer behaviour: they are navigation.
+  let roadmapByNode = new Map<number, Roadmap>();
+  let roadmapsLoaded = false;
+  let slice: Roadmap | null = null;
+  let sliceTitle = '';
+  let sliceColor = '#c9a227';
+  let sliceParent = '';
+  let sliceDone: Set<string> = new Set();
+  let sliceDoneCount = 0;
+  let sliceTotal = 0;
+  // slice drawer
+  let sDrawerOpen = false;
+  let sdLabel = '';
+  let sdKind: string = 'topic';
+  let sdLevel = 0;
+  let sdDesc: string | null = null;
+  let sdWiki: string | null = null;
+  let sdDone = false;
+  let sdId = '';
+  // slice d3 instances (separate from the atlas tree's)
+  let sSvg: any, sG: any, sGLink: any, sGNode: any, sZoom: any, sRoot: any;
+  let sW = 1200, sH = 800;
+  let sIdSeq = 0;
 
   // -- notes drawer content (kept flat so the markup stays simple) --------
   let dName = '';
@@ -141,6 +178,18 @@
     nodesNow.forEach((d: any) => { d.x0 = d.x; d.y0 = d.y; });
   }
 
+  async function ensureRoadmaps() {
+    if (roadmapsLoaded) return;
+    try {
+      const res = await fetch(`${BASE}data/artifacts/roadmaps.json`);
+      if (res.ok) {
+        const r = await res.json();
+        for (const rm of r.roadmaps as Roadmap[]) roadmapByNode.set(rm.node, rm);
+      }
+    } catch { /* roadmap slicing stays off if the artifact is missing */ }
+    roadmapsLoaded = true;
+  }
+
   function clickNode(d: any) {
     const kind = d.data.kind;
     if (kind === 'more') {
@@ -152,8 +201,12 @@
       update(parent);
       return;
     }
-    openNotes(d.data.node);
     if (kind === 'root') return;
+
+    // Expand/collapse first, then decide about panels: an OPENING gesture
+    // (the branch was closed) slices in the roadmap or opens notes; a
+    // CLOSING gesture must not churn panels back open.
+    const wasExpanded = !!d.children;
     if (d.children) { d._children = d.children; d.children = null; update(d); }
     else if (d._children) { d.children = d._children; d._children = null; update(d); }
     else {
@@ -163,6 +216,21 @@
         update(d);
         setTimeout(fit, 320);
       }
+    }
+    if (wasExpanded) return;
+
+    // opening: slice in the roadmap, or fall back to the notes drawer.
+    // Trunks are navigation, so they always take notes.
+    const idx = d.data.node;
+    if (kind !== 'trunk' && roadmapByNode.has(idx)) {
+      openSlice(idx);
+    } else if (roadmapsLoaded) {
+      openNotes(idx);
+    } else {
+      openNotes(idx);
+      ensureRoadmaps().then(() => {
+        if (!slice && roadmapByNode.has(idx)) openSlice(idx);
+      });
     }
   }
 
@@ -265,8 +333,187 @@
       }
     }
     update(root);
-    openNotes(idx);
     setTimeout(fit, 340);
+    // same rule as a click: a topic with a roadmap slices it in
+    if (nodes[idx].kind !== 'trunk' && roadmapByNode.has(idx)) openSlice(idx);
+    else openNotes(idx);
+  }
+
+  // ---------- sliced-in roadmap tree ----------
+  const sPos = (d: any) => `translate(${d.y},${d.x})`;
+  const sDiagonal = d3.linkHorizontal().x((d: any) => d.y).y((d: any) => d.x);
+
+  function shade(hex: string, step: number) {
+    const m = hex.replace('#', '');
+    const num = parseInt(m.length === 3 ? m.split('').map(c => c + c).join('') : m, 16);
+    const f = 1 - Math.min(0.45, step * 0.13);
+    const r = Math.round(((num >> 16) & 255) * f);
+    const g2 = Math.round(((num >> 8) & 255) * f);
+    const b = Math.round((num & 255) * f);
+    return `#${((r << 16) | (g2 << 8) | b).toString(16).padStart(6, '0')}`;
+  }
+
+  function openSlice(idx: number) {
+    const rm = roadmapByNode.get(idx);
+    if (!rm) { openNotes(idx); return; }
+    try {
+      sliceDone = new Set(JSON.parse(localStorage.getItem('arbor-roadmap-' + rm.slug) ?? '[]'));
+    } catch { sliceDone = new Set(); }
+    sliceDoneCount = rm.nodes.filter(n => n.kind === 'primary' && sliceDone.has(n.id)).length;
+    sliceTotal = rm.nodes.filter(n => n.kind === 'primary').length;
+    sliceTitle = nodes[idx].name;
+    sliceColor = trunks[nodes[idx].trunk]?.color ?? '#c9a227';
+    sliceParent = nodes[idx].parent >= 0 ? nodes[nodes[idx].parent].name : '';
+    drawerOpen = false;
+    sDrawerOpen = false;
+    slice = rm;
+    // the stage div needs one frame to exist
+    requestAnimationFrame(() => buildSliceTree(rm));
+  }
+
+  function buildSliceTree(rm: Roadmap) {
+    const stage = document.getElementById('sliceStage');
+    if (!stage) return;
+    stage.innerHTML = '';
+    sW = stage.clientWidth || window.innerWidth;
+    sH = stage.clientHeight || window.innerHeight;
+    sSvg = d3.select(stage).append('svg')
+      .attr('viewBox', [0, 0, sW, sH])
+      .attr('width', '100%').attr('height', sH);
+    sG = sSvg.append('g');
+    sGLink = sG.append('g');
+    sGNode = sG.append('g');
+    sZoom = d3.zoom().scaleExtent([0.15, 4])
+      .on('zoom', (event: any) => sG.attr('transform', event.transform));
+    sSvg.call(sZoom);
+
+    const byLevel = new Map<number, any[]>();
+    for (const n of rm.nodes) {
+      if (n.kind !== 'primary') continue;
+      if (!byLevel.has(n.level)) byLevel.set(n.level, []);
+      byLevel.get(n.level)!.push({
+        name: n.label, kind: 'topic', id: n.id, level: n.level,
+        desc: n.desc, wiki: n.wiki, size: n.size,
+        done: sliceDone.has(n.id),
+      });
+    }
+    const branches = [...byLevel.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([lv, topics]) => ({
+        name: LEVEL_NAMES[lv] ?? `Level ${lv + 1}`,
+        kind: 'level', level: lv, color: shade(sliceColor, lv),
+        children: topics,
+      }));
+    const optional = rm.nodes.filter(n => n.kind === 'optional');
+    if (optional.length) {
+      branches.push({
+        name: 'Related fields', kind: 'level', level: branches.length,
+        color: '#6b7280',
+        children: optional.map(n => ({
+          name: n.label, kind: 'optional', id: n.id, level: n.level,
+          desc: n.desc, wiki: n.wiki, size: n.size, done: false,
+        })),
+      });
+    }
+    sRoot = d3.hierarchy({ name: sliceTitle, kind: 'root', children: branches });
+    sRoot.x0 = 0; sRoot.y0 = 0;
+    sRoot.each((d: any) => { d.id = 's' + (sIdSeq++); });
+    sUpdate(sRoot, true);
+    sFit();
+    setTimeout(sFit, 150);
+  }
+
+  function sUpdate(source: any, first = false) {
+    d3.tree().nodeSize([30, 220])(sRoot);
+    const nodesNow = sRoot.descendants();
+    const links = sRoot.links();
+    const t = first ? 0 : 280;
+
+    const link = sGLink.selectAll('path.slink').data(links, (d: any) => d.target.id);
+    link.enter().append('path').attr('class', 'slink')
+      .merge(link).transition().duration(t).attr('d', sDiagonal);
+    link.exit().transition().duration(t).attr('d', sDiagonal).remove();
+
+    const node = sGNode.selectAll('g.snode').data(nodesNow, (d: any) => d.id);
+    const nodeEnter = node.enter().append('g')
+      .attr('class', 'snode')
+      .attr('transform', first ? sPos : sPos(source))
+      .attr('opacity', first ? 1 : 0)
+      .on('click', (event: any, d: any) => { event.stopPropagation(); sClick(d); });
+
+    nodeEnter.append('circle')
+      .attr('r', (d: any) => d.data.kind === 'root' ? 10 : d.data.kind === 'level' ? 7 : 5)
+      .attr('class', (d: any) =>
+        `sc sc-${d.data.kind}${d.data.kind === 'topic' && d.data.done ? ' sc-done' : ''}`)
+      .style('fill', (d: any) =>
+        d.data.kind === 'root' ? sliceColor
+        : d.data.kind === 'level' ? (d.data.color ?? '#5d6cc0')
+        : d.data.done ? '#3fb950'
+        : d.data.kind === 'optional' ? '#6b7280' : '#8ab4ff');
+
+    nodeEnter.append('text')
+      .attr('dy', '0.32em')
+      .attr('class', (d: any) =>
+        `sl sl-${Math.min(d.depth, 3)}${d.data.kind === 'topic' && d.data.done ? ' sl-done' : ''}`)
+      .attr('x', (d: any) => (d.data.kind === 'root' ? -14 : 12))
+      .attr('text-anchor', (d: any) => (d.data.kind === 'root' ? 'end' : 'start'))
+      .text((d: any) => d.data.name);
+
+    nodeEnter.merge(node).transition().duration(t)
+      .attr('transform', sPos).attr('opacity', 1);
+    node.exit().transition().duration(t)
+      .attr('transform', sPos(source)).attr('opacity', 0).remove();
+  }
+
+  function sClick(d: any) {
+    if (d.data.kind === 'topic' || d.data.kind === 'optional') {
+      sdLabel = d.data.name;
+      sdKind = d.data.kind;
+      sdLevel = d.data.level ?? 0;
+      sdDesc = d.data.desc ?? null;
+      sdWiki = d.data.wiki ?? null;
+      sdDone = d.data.kind !== 'optional' && sliceDone.has(d.data.id);
+      sdId = d.data.id;
+      sDrawerOpen = true;
+      return;
+    }
+    if (d.children) { d._children = d.children; d.children = null; }
+    else if (d._children) { d.children = d._children; d._children = null; }
+    sUpdate(d);
+  }
+
+  function toggleSdDone() {
+    if (!slice) return;
+    const node = slice.nodes.find(n => n.id === sdId && n.kind === 'primary');
+    if (!node) return;
+    const next = new Set(sliceDone);
+    if (next.has(node.id)) next.delete(node.id); else next.add(node.id);
+    sliceDone = next;
+    try { localStorage.setItem('arbor-roadmap-' + slice.slug, JSON.stringify([...next])); } catch { /* session-only */ }
+    sRoot.each((d: any) => { if (d.data.kind === 'topic') d.data.done = sliceDone.has(d.data.id); });
+    sUpdate(sRoot);
+    sliceDoneCount = slice.nodes.filter(n => n.kind === 'primary' && sliceDone.has(n.id)).length;
+    sdDone = sliceDone.has(node.id);
+  }
+
+  function sFit() {
+    requestAnimationFrame(() => {
+      try {
+        const bounds = sG.node().getBBox();
+        if (!bounds.width || !bounds.height) return;
+        const pad = 120;
+        const sx = Math.min(sW / (bounds.width + pad * 2), sH / (bounds.height + pad * 2), 1.4);
+        const tx = sW / 2 - sx * (bounds.x + bounds.width / 2) + 40;
+        const ty = sH / 2 - sx * (bounds.y + bounds.height / 2);
+        sSvg.transition().duration(450)
+          .call(sZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(sx));
+      } catch { /* not ready */ }
+    });
+  }
+
+  function closeSlice() {
+    slice = null;
+    sDrawerOpen = false;
   }
 
   // -- boot --------------------------------------------------------------------
@@ -291,6 +538,7 @@
         relatedOf[b]?.push(a);
       }
       roadmapLinks = lRes.ok ? await lRes.json() : {};
+      ensureRoadmaps(); // warm the slice index so first clicks are instant
 
       const rootTrunks = nodes
         .map((n, i) => ({ n, i }))
@@ -339,6 +587,7 @@
         if (h.startsWith('n=')) {
           const idx = Number(h.slice(2));
           if (Number.isInteger(idx) && nodes[idx]) focusNode(idx);
+          // focusNode routes to the roadmap slice or notes on its own
         } else {
           const ti = trunks.findIndex(t => t.id === h);
           if (ti >= 0) {
@@ -401,7 +650,10 @@
       <div class="notes-stats">
         <div><dt>{fmt(dSize)}</dt><dd>fields beneath</dd></div>
         {#if dRoadmap}
-          <div><dt>→</dt><dd><a href={`${BASE}roadmap/${dRoadmap}`}>open its roadmap</a></dd></div>
+          <div><dt>→</dt><dd>
+            <button type="button" class="as-link" onclick={() => openSlice(drawerNode)}>open its roadmap</button>
+            <a href={`${BASE}roadmap/${dRoadmap}`}>full page ↗</a>
+          </dd></div>
         {/if}
       </div>
 
@@ -443,6 +695,59 @@
         </section>
       {/if}
     </aside>
+  {/if}
+
+  <!-- sliced-in roadmap: the same dendrogram the roadmap section draws -->
+  {#if slice}
+    <div class="slice">
+      <div id="sliceStage" class="slice-stage"></div>
+
+      <div class="floats">
+        <div class="panel title-panel">
+          <p class="crumb">Roadmap{sliceParent ? ` · under ${sliceParent}` : ''}</p>
+          <h1 class="sel-title" style={`color:${sliceColor}`}>{sliceTitle}</h1>
+          <div class="progress">
+            <div class="bar"><div class="fill" style={`width:${sliceTotal ? Math.round(100 * sliceDoneCount / sliceTotal) : 0}%;background:${sliceColor}`}></div></div>
+            <span class="num">{sliceDoneCount}/{sliceTotal} done</span>
+          </div>
+        </div>
+        <div class="panel tools">
+          <button type="button" onclick={closeSlice}>← Atlas tree</button>
+        </div>
+        <p class="hint">click a topic for notes · drag to pan · scroll to zoom</p>
+      </div>
+
+      <div class="backdrop" class:show={sDrawerOpen} onclick={() => (sDrawerOpen = false)}></div>
+      <aside class="notes" class:open={sDrawerOpen} style={`--trunk:${sliceColor}`}>
+        <button type="button" class="notes-close" onclick={() => (sDrawerOpen = false)} aria-label="Close notes">✕</button>
+        <p class="notes-kicker">
+          {sdKind === 'optional' ? 'related field' : 'topic'}{sdKind === 'optional' ? '' : ` · ${LEVEL_NAMES[sdLevel] ?? `Level ${sdLevel + 1}`}`}
+        </p>
+        <h2 class="notes-title">{sdLabel}</h2>
+
+        {#if sdKind === 'topic'}
+          <button type="button" class="done-toggle" class:primary={sdDone} onclick={toggleSdDone}>
+            {sdDone ? '✓ Completed — undo?' : 'Mark as completed'}
+          </button>
+        {/if}
+
+        {#if sdDesc}
+          <section>
+            <h3>What it is</h3>
+            <p>{sdDesc}</p>
+          </section>
+        {/if}
+
+        {#if sdWiki}
+          <section>
+            <h3>Elsewhere</h3>
+            <a class="wiki" href={`https://en.wikipedia.org/wiki/${sdWiki}`} target="_blank" rel="noopener noreferrer">
+              Read on Wikipedia ↗
+            </a>
+          </section>
+        {/if}
+      </aside>
+    </div>
   {/if}
 </div>
 
@@ -543,6 +848,50 @@
   .link-list button:hover { color: var(--trunk); }
   .wiki { font-size: 13.5px; color: var(--text-secondary); text-decoration: none; }
   .wiki:hover { color: var(--trunk); }
+
+  /* ---------- sliced-in roadmap ---------- */
+  .slice {
+    position: fixed; inset: 0; z-index: 140;
+    background: radial-gradient(ellipse at 28% 40%, #12151a 0%, #0b0d0c 70%);
+  }
+  .slice-stage { position: absolute; inset: 0; cursor: grab; }
+  .slice-stage:active { cursor: grabbing; }
+
+  :global(.slink) { fill: none; stroke: #333b44; stroke-width: 1.15; }
+  :global(.snode) { cursor: pointer; }
+  :global(.snode text) { font-family: var(--font-body); fill: #c8ccd1; }
+  :global(.sl) { font-size: 13px; }
+  :global(.sl-0) { font-size: 16px; font-weight: 800; fill: #e8b76a; }
+  :global(.sl-1) { font-size: 13.5px; font-weight: 700; fill: #e6e2d6; }
+  :global(.sl-2) { font-size: 12.5px; }
+  :global(.sl-done) { fill: #86d99a !important; }
+  :global(.sc) { stroke: #0b0d0c; stroke-width: 1.5; }
+  :global(.sc:hover) { filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.45)); }
+  :global(.sc-done) { fill: #3fb950 !important; }
+
+  .slice .progress { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .slice .progress .bar {
+    width: 150px; height: 6px; border-radius: 99px;
+    background: var(--bg-tertiary); overflow: hidden; border: 1px solid var(--line);
+  }
+  .slice .progress .fill { height: 100%; transition: width 0.3s; }
+  .slice .progress span { font-size: 11px; color: var(--text-muted); }
+
+  .done-toggle {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    border-radius: 999px; border: 1px solid var(--line-light);
+    background: transparent; color: var(--text-primary); font: inherit;
+    font-size: 13px; font-weight: 600; padding: 7px 15px; margin: 2px 0 14px;
+  }
+  .done-toggle:hover { border-color: var(--text-secondary); }
+  .done-toggle.primary { background: #274d33; border-color: #3fb950; color: #86d99a; }
+
+  .as-link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--text-secondary); font: inherit; font-size: 11px;
+  }
+  .as-link:hover { color: var(--trunk); }
+  .notes-stats dd a { margin-left: 8px; }
 
   @media (max-width: 640px) {
     .title-panel { left: 64px; max-width: 70vw; }
