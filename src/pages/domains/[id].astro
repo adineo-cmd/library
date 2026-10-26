@@ -1,0 +1,38 @@
+---
+/**
+ * One trunk's tree. The id list mirrors the trunks in scripts/spine.mjs —
+ * they are stable, hand-curated ids, so a static route table is safe here.
+ */
+import BaseLayout from '../../components/layout/BaseLayout.astro';
+import TrunkTree from '../../components/views/TrunkTree.svelte';
+
+export function getStaticPaths() {
+  // The ids mirror the trunks in scripts/spine.mjs; declared inside because
+  // getStaticPaths runs in its own scope and cannot see frontmatter consts.
+  const TRUNKS = [
+    { id: 'sciences', name: 'Sciences' },
+    { id: 'formal', name: 'Mathematics & Logic' },
+    { id: 'technology', name: 'Technology & Computing' },
+    { id: 'humanities', name: 'Humanities' },
+    { id: 'social', name: 'Social Sciences' },
+    { id: 'arts', name: 'Arts & Culture' },
+    { id: 'health', name: 'Health & Medicine' },
+    { id: 'law', name: 'Law & Governance' },
+    { id: 'general', name: 'Interdisciplinary' },
+  ];
+  return TRUNKS.map((t) => ({
+    params: { id: t.id },
+    props: { title: t.name },
+  }));
+}
+
+const { title } = Astro.props;
+---
+
+<BaseLayout
+  title={title}
+  description={`The ${title} domain tree — subdomains and fields, one screen.`}
+  currentPage="domains"
+>
+  <TrunkTree client:only="svelte" />
+</BaseLayout>

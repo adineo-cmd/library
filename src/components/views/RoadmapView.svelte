@@ -39,7 +39,7 @@
   let doneCount = 0;
   let total = 0;
 
-  // drawer state
+  // drawer state — the W-questions the notes answer
   let drawerOpen = false;
   let dLabel = '';
   let dKind = '';
@@ -47,7 +47,39 @@
   let dDesc: string | null = null;
   let dWiki: string | null = null;
   let dDone = false;
+  let dExtract: string | null = null;
+  let dExtractState: 'idle' | 'loading' | 'ok' | 'none' = 'idle';
+  let dSize = 0;
+  let dPath = '';
+  let dChildren: string[] = [];
+  let dRelated: string[] = [];
+  let dLevelNames: string[] = [];
 
+  // structure lookups, filled once the artifact lands
+  let sNodes: any[] = [];
+  let idToIdx = new Map<string, number>();
+  let sKids: number[][] = [];
+  let sParents: number[] = [];
+  const extractCache = new Map<string, string | null>();
+
+  async function fetchExtract(wiki: string | null): Promise<string | null> {
+    if (!wiki) return null;
+    if (extractCache.has(wiki)) return extractCache.get(wiki)!;
+    try {
+      const t = wiki.replace(/ /g, '_');
+      const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(t)}`);
+      if (!res.ok) throw new Error(String(res.status));
+      const j = await res.json();
+      const ex: string | null = j.extract ?? null;
+      extractCache.set(wiki, ex);
+      return ex;
+    } catch {
+      extractCache.set(wiki, null);
+      return null;
+    }
+  }
+
+  let xlinks: [number, number][] = [];
   let svg: any, g: any, gLink: any, gNode: any, zoomBehavior: any, root: any;
   let width = 1200, height = 800;
   let stage: HTMLElement;
@@ -116,6 +148,47 @@
     dDesc = data.desc ?? null;
     dWiki = data.wiki ?? null;
     dDone = data.kind !== 'optional' && done.has(data.id);
+    dExtract = null;
+    dExtractState = 'idle';
+
+    // W-answers from the atlas structure behind this roadmap
+    const idx = idToIdx.get(data.id);
+    if (idx != null) {
+      const n = sNodes[idx];
+      dSize = n.size ?? 1;
+      const chain: string[] = [];
+      let p = sParents[idx];
+      let guard = 0;
+      while (p >= 0 && guard++ < 6) {
+        chain.unshift(sNodes[p].name);
+        p = sParents[p];
+      }
+      dPath = chain.join(' · ');
+      dChildren = (sKids[idx] ?? [])
+        .slice().sort((a, b) => (sNodes[b].size ?? 0) - (sNodes[a].size ?? 0))
+        .slice(0, 5).map(i => sNodes[i].name);
+      const rel: string[] = [];
+      for (const [a, b] of xlinks) {
+        if (rel.length >= 4) break;
+        if (a === idx) rel.push(sNodes[b]?.name);
+        else if (b === idx) rel.push(sNodes[a]?.name);
+      }
+      dRelated = rel.filter(Boolean);
+    } else {
+      dSize = 0; dPath = ''; dChildren = []; dRelated = [];
+    }
+
+    // live Wikipedia summary, behind the atlas description
+    if (dWiki) {
+      dExtractState = 'loading';
+      fetchExtract(dWiki).then(ex => {
+        // the drawer may have moved on while we waited
+        if (dWiki === data.wiki && drawerOpen) {
+          dExtract = ex;
+          dExtractState = ex ? 'ok' : 'none';
+        }
+      });
+    }
   }
 
   function toggleDone() {
@@ -234,6 +307,20 @@
         });
       }
 
+      // atlas lookups for the drawer's W-answers
+      sNodes = s.nodes;
+      idToIdx = new Map(s.nodes.map((n: any, i: number) => [n.id, i]));
+      sParents = s.nodes.map((n: any) => n.parent);
+      sKids = Array.from({ length: s.nodes.length }, () => [] as number[]);
+      for (let i = 0; i < s.nodes.length; i++) {
+        const p = sParents[i];
+        if (p >= 0) sKids[p].push(i);
+      }
+      xlinks = s.xlinks;
+
+      dLevelNames = [...byLevel.keys()].sort((a, b) => a - b)
+        .map(lv => LEVELS[lv] ?? `Level ${lv + 1}`);
+
       total = rm.nodes.filter(n => n.kind === 'primary').length;
       doneCount = rm.nodes.filter(n => n.kind === 'primary' && done.has(n.id)).length;
 
@@ -330,10 +417,52 @@
         </button>
       {/if}
 
-      {#if dDesc}
+      <section>
+        <h3>What it is</h3>
+        {#if dDesc}<p>{dDesc}</p>{/if}
+        {#if dExtractState === 'loading'}
+          <p class="extract-loading">reading the article…</p>
+        {:else if dExtract}
+          <p class="extract">{dExtract.length > 520 ? dExtract.slice(0, 517) + '…' : dExtract}</p>
+        {/if}
+        {#if !dDesc && dExtractState !== 'ok'}
+          <p class="extract-loading">a summary for this field is not on file yet — the Wikipedia link below has the full story.</p>
+        {/if}
+      </section>
+
+      {#if dSize > 1 || dRelated.length}
         <section>
-          <h3>What it is</h3>
-          <p>{dDesc}</p>
+          <h3>Why it matters</h3>
+          {#if dSize > 1}<p>{fmt(dSize)} fields in the atlas grow out of this one.</p>{/if}
+          {#if dRelated.length}
+            <p class="why-line">It is closely tied to:</p>
+            <div class="chips">{#each dRelated as r (r)}<span class="chip">{r}</span>{/each}</div>
+          {/if}
+        </section>
+      {/if}
+
+      {#if dPath}
+        <section>
+          <h3>Where it fits</h3>
+          <p class="path">{dPath}</p>
+        </section>
+      {/if}
+
+      {#if dChildren.length}
+        <section>
+          <h3>Where it leads</h3>
+          <div class="chips">{#each dChildren as c (c)}<span class="chip">{c}</span>{/each}</div>
+        </section>
+      {/if}
+
+      {#if dKind === 'topic' && dLevelNames.length}
+        <section>
+          <h3>How you'll learn it</h3>
+          <ol class="levels">
+            {#each dLevelNames as ln, li (ln)}
+              <li class:current={li === dLevel}>{ln}{li === dLevel ? ' — you are here' : ''}</li>
+            {/each}
+          </ol>
         </section>
       {/if}
 
@@ -454,6 +583,29 @@
   .notes p { color: #c8ccd1; font-size: 14px; line-height: 1.6; }
   .wiki { font-size: 13.5px; color: var(--text-secondary); text-decoration: none; }
   .wiki:hover { color: var(--trunk); }
+  .extract { color: #b8bdb3; font-size: 13.5px; line-height: 1.65; margin-top: 8px; }
+  .extract-loading { color: var(--text-muted); font-size: 12.5px; font-style: italic; }
+  .why-line { margin-bottom: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chip {
+    font-size: 11.5px; color: var(--text-secondary);
+    border: 1px solid var(--line-light); border-radius: 999px;
+    padding: 3px 11px;
+  }
+  .path { font-family: var(--font-data); font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
+  .levels { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .levels li {
+    font-size: 13px; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .levels li::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--line-light);
+  }
+  .levels li.current {
+    color: var(--trunk); font-weight: 600;
+  }
+  .levels li.current::before { background: var(--trunk); box-shadow: 0 0 6px var(--trunk); }
 
   @media (max-width: 640px) {
     .title-panel { left: 64px; max-width: 68vw; }

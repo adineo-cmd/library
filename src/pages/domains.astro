@@ -1,12 +1,35 @@
 ---
 import BaseLayout from '../components/layout/BaseLayout.astro';
-import Explorer from '../components/views/Explorer.svelte';
+import DomainsIndex from '../components/views/DomainsIndex.svelte';
 ---
 
 <BaseLayout
   title="Domains"
-  description="Every field in one tree — the whole atlas as a horizontal dendrogram."
+  description="Every main domain of the atlas — pick one to see its tree."
   currentPage="domains"
 >
-  <Explorer client:only="svelte" />
+  <div class="page">
+    <header class="intro">
+      <p class="eyebrow">Root System</p>
+      <h1 class="page-title">Every field branches from one curiosity</h1>
+      <p class="page-subtitle">
+        Pick a main domain — its tree opens with the subdomains and fields
+        waiting inside it. One domain per screen, so there is room to think.
+      </p>
+    </header>
+
+    <DomainsIndex client:only="svelte" />
+  </div>
 </BaseLayout>
+
+<style>
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 84px 40px 72px;
+  }
+
+  @media (max-width: 768px) {
+    .page { padding: 72px 20px 56px; }
+  }
+</style>
