@@ -37,7 +37,7 @@
           (sum: number, n: any) => (n.trunk === ti && n.kind === 'field' ? sum + 1 : sum), 0);
         const domainNames = domainIdxs
           .slice()
-          .sort((a, b) => (s.nodes[b].size ?? 0) - (s.nodes[a].size ?? 0))
+          .sort((a, b) => (s.nodes[b].pop ?? 0) - (s.nodes[a].pop ?? 0))
           .map((i: number) => s.nodes[i].name);
         return {
           id: t.id, name: t.name, color: t.color,
