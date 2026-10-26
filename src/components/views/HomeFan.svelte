@@ -114,7 +114,7 @@
           onmouseleave={() => (hover = null)}
         >
           <circle cx={LABEL_X} cy={y} r={active ? 7 : 5} fill={t.color} />
-          <a href={`${BASE}domains#${t.id}`}>
+          <a href={`${BASE}domains/${t.id}`}>
             <text class="trunk-name" x={LABEL_X + 16} y={y + 4} fill={active ? t.color : 'var(--text-primary)'}>
               {t.name}
             </text>

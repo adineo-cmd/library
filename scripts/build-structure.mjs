@@ -19,7 +19,7 @@
  *   xlinks [[a, b]]            — Wikidata multi-parent edges, node indices
  *   taxonomy-layout.bin         — Float32 x/y, precomputed force layout
  */
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { forceSimulation, forceManyBody, forceLink, forceCenter, forceCollide } from 'd3-force';
@@ -29,7 +29,58 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORK = resolve(ROOT, 'atlas-work');
 const OUT = resolve(ROOT, 'public/data/artifacts');
 
-function main() {
+/**
+ * Give every spine node a Wikipedia sitelink by asking enwiki whether an
+ * article with that exact title exists (redirects resolved, disambiguation
+ * pages rejected). Cached in atlas-work/spine-wiki.json so reruns stay
+ * offline-fast; ~500 titles is ~13 batched API calls.
+ */
+async function fillSpineWiki(nodes) {
+  const cachePath = resolve(WORK, 'spine-wiki.json');
+  const map = existsSync(cachePath) ? JSON.parse(readFileSync(cachePath, 'utf8')) : {};
+  const missing = [...new Set(nodes
+    .filter(n => !n.wiki && n.kind !== 'field')
+    .map(n => n.name))]
+    .filter(t => !(t in map));
+  if (missing.length) {
+    for (let i = 0; i < missing.length; i += 40) {
+      const chunk = missing.slice(i, i + 40);
+      const url = 'https://en.wikipedia.org/w/api.php?' + new URLSearchParams({
+        action: 'query', format: 'json', titles: chunk.join('|'),
+        redirects: '1', prop: 'pageprops',
+      });
+      try {
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'arbor-atlas/1.0 (educational atlas)' },
+          signal: AbortSignal.timeout(30_000),
+        });
+        const j = await res.json();
+        const q = j.query ?? {};
+        const norm = new Map((q.normalized ?? []).map(x => [x.from, x.to]));
+        const redir = new Map((q.redirects ?? []).map(x => [x.from, x.to]));
+        const canon = (t) => redir.get(norm.get(t) ?? t) ?? (norm.get(t) ?? t);
+        const live = new Set(Object.values(q.pages ?? {})
+          .filter(p => p.pageid > 0 && !p.pageprops?.disambiguation)
+          .map(p => p.title));
+        for (const t of chunk) {
+          const c = canon(t);
+          map[t] = live.has(c) ? c.replace(/ /g, '_') : null;
+        }
+      } catch (e) {
+        console.warn(`  wiki-fill batch failed: ${e.message}`);
+      }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    writeFileSync(cachePath, JSON.stringify(map));
+  }
+  for (const n of nodes) {
+    if (n.wiki || n.kind === 'field') continue;
+    const hit = map[n.name];
+    if (hit) n.wiki = hit;
+  }
+}
+
+async function main() {
   const { edges } = JSON.parse(readFileSync(resolve(WORK, 'wikidata-edges.json'), 'utf8'));
   const labels = JSON.parse(readFileSync(resolve(WORK, 'wikidata-labels.json'), 'utf8'));
 
@@ -195,6 +246,23 @@ function main() {
       wiki: l.wiki ?? null, parent: placed.get(qid),
       trunk: nodes[bucketIdx]?.trunk ?? SPINE.length, kind: 'field' });
     qidIndex.set(qid, nodes.length - 1);
+  }
+
+  await fillSpineWiki(nodes);
+
+  // ---- spine sitelinks ---------------------------------------------------------
+  // Many curated domains and subdomains exist verbatim in the Wikidata pool
+  // ("Quantum Mechanics" ↔ quantum mechanics). Borrow their Wikipedia
+  // sitelinks so every node in the atlas can answer "what is this" with a
+  // real article, not just the pool's leaf fields.
+  {
+    const byLabel = new Map();
+    for (const [q, l] of pool) byLabel.set(l.label.toLowerCase(), l);
+    for (const n of nodes) {
+      if (n.kind === 'field' || n.wiki) continue;
+      const hit = byLabel.get(n.name.toLowerCase());
+      if (hit?.wiki) n.wiki = hit.wiki;
+    }
   }
 
   // ---- sizes and depths ------------------------------------------------------
