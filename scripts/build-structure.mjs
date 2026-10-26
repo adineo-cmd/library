@@ -24,6 +24,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { forceSimulation, forceManyBody, forceLink, forceCenter, forceCollide } from 'd3-force';
 import { SPINE, GENERAL_TRUNK } from './spine.mjs';
+import { fieldScore, spineScore } from './popularity.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORK = resolve(ROOT, 'atlas-work');
@@ -36,7 +37,10 @@ const OUT = resolve(ROOT, 'public/data/artifacts');
  * offline-fast; ~500 titles is ~13 batched API calls.
  */
 async function fillSpineWiki(nodes) {
-  const cachePath = resolve(WORK, 'spine-wiki.json');
+  // v2 cache entries are { w: article title, q: wikidata qid | null } — the
+  // qid lets the popularity pass measure spine nodes through Wikidata
+  // sitelinks instead of the rate-limited langlinks endpoint.
+  const cachePath = resolve(WORK, 'spine-wiki2.json');
   const map = existsSync(cachePath) ? JSON.parse(readFileSync(cachePath, 'utf8')) : {};
   const missing = [...new Set(nodes
     .filter(n => !n.wiki && n.kind !== 'field')
@@ -59,12 +63,15 @@ async function fillSpineWiki(nodes) {
         const norm = new Map((q.normalized ?? []).map(x => [x.from, x.to]));
         const redir = new Map((q.redirects ?? []).map(x => [x.from, x.to]));
         const canon = (t) => redir.get(norm.get(t) ?? t) ?? (norm.get(t) ?? t);
-        const live = new Set(Object.values(q.pages ?? {})
-          .filter(p => p.pageid > 0 && !p.pageprops?.disambiguation)
-          .map(p => p.title));
+        const pages = Object.values(q.pages ?? {}).filter(p => p.pageid > 0);
+        const liveTitle = new Map(pages
+          .filter(p => !p.pageprops?.disambiguation)
+          .map(p => [p.title, p.pageprops?.wikibase_item ?? null]));
         for (const t of chunk) {
           const c = canon(t);
-          map[t] = live.has(c) ? c.replace(/ /g, '_') : null;
+          map[t] = liveTitle.has(c)
+            ? { w: c.replace(/ /g, '_'), q: liveTitle.get(c) }
+            : null;
         }
       } catch (e) {
         console.warn(`  wiki-fill batch failed: ${e.message}`);
@@ -76,7 +83,9 @@ async function fillSpineWiki(nodes) {
   for (const n of nodes) {
     if (n.wiki || n.kind === 'field') continue;
     const hit = map[n.name];
-    if (hit) n.wiki = hit;
+    if (!hit) continue;
+    n.wiki = hit.w;
+    if (hit.q) n.qid = hit.q;
   }
 }
 
@@ -244,11 +253,61 @@ async function main() {
     const bucketIdx = firstPass.get(qid) ?? placed.get(qid);
     nodes.push({ id: qid, name: l.label, description: l.description ?? null,
       wiki: l.wiki ?? null, parent: placed.get(qid),
-      trunk: nodes[bucketIdx]?.trunk ?? SPINE.length, kind: 'field' });
+      trunk: nodes[bucketIdx]?.trunk ?? SPINE.length, kind: 'field',
+      pop: 0 });
     qidIndex.set(qid, nodes.length - 1);
   }
 
+  // Borrow qids onto spine nodes by label first, so the popularity pass
+  // measures them through Wikidata where possible.
+  {
+    const byLabel = new Map();
+    for (const [q, l] of pool) byLabel.set(l.label.toLowerCase(), { ...l, qid: q });
+    for (const n of nodes) {
+      if (n.kind === 'field' || n.qid) continue;
+      const hit = byLabel.get(n.name.toLowerCase());
+      if (hit?.qid) n.qid = hit.qid;
+    }
+  }
+
   await fillSpineWiki(nodes);
+
+  // ---- popularity: hand knowledge, zero network --------------------------------
+  // The score is: curated spine position (famous-first by construction) over
+  // a famous-terms bonus for pool fields, with the sitelink counts already
+  // cached from earlier builds as a small local tie-breaker. No requests.
+  function scorePopularity(nodes) {
+    let cache = {};
+    const cachePath = resolve(WORK, 'sitelinks.json');
+    if (existsSync(cachePath)) {
+      try { cache = JSON.parse(readFileSync(cachePath, 'utf8')); } catch { cache = {}; }
+    }
+    // A spine node's rank is its position in the spine's curated lists —
+    // spine.mjs was written famous-first, so declaration order IS the
+    // ranking. Node-array order would leak the wine-flood sizes into it.
+    const orderIdx = new Map();
+    SPINE.forEach((trunk) => {
+      trunk.domains.forEach((d, di) => {
+        orderIdx.set(`domain:${trunk.id}/${d.id}`, di);
+        (d.subs ?? []).forEach((s, si) => orderIdx.set(`sub:${trunk.id}/${d.id}/${s.id}`, si));
+      });
+    });
+    for (const n of nodes) {
+      const sitelinks = (n.qid ? cache[n.qid] : undefined)
+        ?? (n.wiki ? cache['_t:' + n.wiki] : undefined) ?? 0;
+      if (n.kind === 'field') {
+        n.pop = Math.round(fieldScore(n.name, sitelinks));
+      } else if (orderIdx.has(n.id)) {
+        // the curated position IS the rank — no bonus here, or measured
+        // sitelink counts would shuffle the hand ordering
+        n.pop = spineScore(n.kind, orderIdx.get(n.id));
+      } else {
+        // catch-all buckets ("Other X Fields") — uncurated leftovers sink
+        n.pop = 120;
+      }
+    }
+  }
+  scorePopularity(nodes);
 
   // ---- spine sitelinks ---------------------------------------------------------
   // Many curated domains and subdomains exist verbatim in the Wikidata pool
@@ -257,11 +316,12 @@ async function main() {
   // real article, not just the pool's leaf fields.
   {
     const byLabel = new Map();
-    for (const [q, l] of pool) byLabel.set(l.label.toLowerCase(), l);
+    for (const [q, l] of pool) byLabel.set(l.label.toLowerCase(), { ...l, qid: q });
     for (const n of nodes) {
       if (n.kind === 'field' || n.wiki) continue;
       const hit = byLabel.get(n.name.toLowerCase());
       if (hit?.wiki) n.wiki = hit.wiki;
+      if (hit?.qid) n.qid = hit.qid;
     }
   }
 
