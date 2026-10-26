@@ -14,7 +14,7 @@
   interface Entry {
     slug: string; title: string; node: number; kind: string;
     trunk: number; trunkName: string; steps: number; depth: number;
-    desc: string | null;
+    desc: string | null; pop: number;
   }
 
   let entries: Entry[] = [];

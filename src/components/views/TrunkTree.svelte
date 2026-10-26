@@ -51,8 +51,11 @@
   function childrenOf(idx: number): TData[] | undefined {
     const all = kids[idx] ?? [];
     if (!all.length) return undefined;
+    // popular first (hand-ranked in scripts/popularity.mjs); the kind tier
+    // only breaks ties so a trunk's domains still lead its branches
     const sorted = [...all].sort((a, b) =>
-      kindRank(nodes[a].kind) - kindRank(nodes[b].kind)
+      (nodes[b].pop ?? 0) - (nodes[a].pop ?? 0)
+      || kindRank(nodes[a].kind) - kindRank(nodes[b].kind)
       || nodes[b].size - nodes[a].size
       || nodes[a].name.localeCompare(nodes[b].name));
     const n = Math.min(sorted.length, shown.get(idx) ?? CAP);

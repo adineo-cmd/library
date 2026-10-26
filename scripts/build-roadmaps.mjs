@@ -171,10 +171,14 @@ function main() {
       steps: rNodes.filter(n => n.kind === 'primary').length,
       depth: levelCount,
       desc: nodes[i].description ?? null,
+      // popularity from scripts/popularity.mjs — the grand tour leads its
+      // group, then the famous fields, the obscure at the end
+      pop: nodes[i].kind === 'trunk' ? 10_000 : (nodes[i].pop ?? 0),
     });
   }
 
-  index.sort((a, b) => a.trunk - b.trunk || b.steps - a.steps);
+  index.sort((a, b) => a.trunk - b.trunk || b.pop - a.pop || b.steps - a.steps
+    || a.title.localeCompare(b.title));
 
   mkdirSync(OUT, { recursive: true });
   writeFileSync(resolve(OUT, 'roadmaps.json'), JSON.stringify({
