@@ -1,16 +1,12 @@
 <script lang="ts">
   /**
-   * The domains view — ONE trunk at a time.
+   * One trunk's tree — the detail page behind the domains index.
    *
-   * The whole-atlas tree was unreadable: nine trunks and nine thousand
-   * fields in one canvas is a hairball no zoom level rescues. So this page
-   * slices the atlas by trunk — "Technology & Computing", or "Sciences", or
-   * whichever main domain you picked — and shows only that trunk's tree:
-   * the trunk at the left, its domains fanned out, subdomains and fields
-   * opening on click. A row of chips switches trunks; the tree refits.
-   *
-   * No notes drawer here — this section is for seeing a domain's shape.
-   * Notes and roadmaps live in the roadmap section.
+   * Reached by clicking a trunk card on /domains (or a trunk link from the
+   * home fan / sidebar). Shows only this main domain: the trunk at the
+   * left, its domains fanned out, subdomains and fields opening on click.
+   * No notes drawer here — this section is for seeing a domain's shape;
+   * notes and roadmaps live in the roadmap section.
    */
   import { onMount } from 'svelte';
   import * as d3 from 'd3';
@@ -203,7 +199,7 @@
     if (first.length) root.children = first;
 
     if (push) {
-      history.replaceState(null, '', `${BASE}domains#${t.id}`);
+      history.replaceState(null, '', `${BASE}domains/${t.id}`);
     }
     update(root, true);
     setTimeout(fit, 60);
@@ -247,6 +243,12 @@
           if (!d) { d = p; break; }
         }
       }
+    }
+    // the chain walk stops at the node's PARENT — open it one more level so
+    // the target node itself is on screen
+    if (d.data.node !== idx && !d.children) {
+      const next = kidsAsNodes(d.data.node, d);
+      if (next.length) d.children = next;
     }
     update(root);
     setTimeout(() => {
@@ -295,16 +297,18 @@
         });
       svg.call(zoomBehavior);
 
-      // entry trunk: the hash wins, else the first trunk
+      // entry trunk: the URL path names it (/domains/<id>); #n=<idx> from
+      // sidebar search jumps deeper still
+      const parts = location.pathname.split('/').filter(Boolean);
+      const pathId = (parts[0] === 'memex' ? parts[2] : parts[1]) ?? '';
+      const initial = trunks.findIndex(t => t.id === pathId);
+      setTrunk(initial >= 0 ? initial : 0, false);
       const applyHash = () => {
         const h = decodeURIComponent(location.hash.slice(1));
         if (h.startsWith('n=')) {
           const idx = Number(h.slice(2));
-          if (Number.isInteger(idx) && nodes[idx]) { focusNode(idx); return; }
+          if (Number.isInteger(idx) && nodes[idx]) focusNode(idx);
         }
-        const ti = trunks.findIndex(t => t.id === h);
-        if (ti >= 0) setTrunk(ti, false);
-        else if (currentTrunk < 0) setTrunk(0, false);
       };
       applyHash();
       window.addEventListener('hashchange', applyHash);
@@ -337,24 +341,8 @@
     <div id="xstage" class="stage" role="img" aria-label="Tree of the {tName} domain"></div>
 
     <div class="floats">
-      <!-- trunk switcher: the only chrome this page needs -->
-      <div class="chip-row" role="tablist" aria-label="Main domains">
-        {#each trunks as t, ti (t.id)}
-          <button
-            type="button"
-            class="chip"
-            class:active={ti === currentTrunk}
-            style={`--trunk:${t.color}`}
-            role="tab"
-            aria-selected={ti === currentTrunk}
-            onclick={() => setTrunk(ti)}
-          >
-            <i class="dot"></i>{t.name}
-          </button>
-        {/each}
-      </div>
-
       <div class="panel title-panel">
+        <a class="crumb" href={`${BASE}domains`}>← All domains</a>
         <h1 class="sel-title" style={`color:${tColor}`}>{tName}</h1>
         <p class="sel-sub num">{tDomains} domains · {fmt(tFields)} fields — click a node to open its branches</p>
       </div>
@@ -401,24 +389,10 @@
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   }
 
-  .chip-row {
-    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 7px; flex-wrap: wrap; justify-content: center;
-    max-width: 72vw; pointer-events: auto;
-  }
-  .chip {
-    display: inline-flex; align-items: center; gap: 7px;
-    background: var(--glass); backdrop-filter: blur(8px);
-    border: 1px solid var(--line); border-radius: 999px;
-    color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 600;
-    padding: 6px 13px; cursor: pointer;
-    transition: color 0.15s ease, border-color 0.15s ease;
-  }
-  .chip:hover { color: var(--text-primary); border-color: var(--line-light); }
-  .chip.active { color: var(--trunk); border-color: var(--trunk); }
-  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--trunk); }
+  .crumb { font-size: 12px; color: var(--text-secondary); text-decoration: none; }
+  .crumb:hover { color: var(--text-primary); }
 
-  .title-panel { position: absolute; top: 64px; left: 72px; max-width: 420px; }
+  .title-panel { position: absolute; top: 14px; left: 72px; max-width: 420px; }
   .sel-title { font-family: var(--font-body); font-size: 22px; font-weight: 700; margin: 0 0 2px; letter-spacing: -0.01em; }
   .sel-sub { font-size: 11.5px; color: var(--text-muted); }
 
@@ -438,8 +412,7 @@
   }
 
   @media (max-width: 720px) {
-    .chip-row { max-width: 94vw; top: 10px; }
-    .title-panel { left: 64px; top: 92px; max-width: 62vw; }
+    .title-panel { left: 64px; max-width: 62vw; }
     .tools { top: auto; bottom: 14px; right: 12px; }
     .hint { display: none; }
   }

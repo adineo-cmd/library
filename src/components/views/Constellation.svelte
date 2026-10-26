@@ -365,7 +365,7 @@
           </div>
           <div class="picked__actions">
             <a
-              href={nodes[selected].wiki ? `https://en.wikipedia.org/wiki/${nodes[selected].wiki}` : `${BASE}domains#n=${selected}`}
+              href={nodes[selected].wiki ? `https://en.wikipedia.org/wiki/${nodes[selected].wiki}` : `${BASE}domains/${trunks[nodes[selected].trunk]?.id ?? ''}#n=${selected}`}
               target={nodes[selected].wiki ? '_blank' : undefined}
               rel="noopener noreferrer"
             >{nodes[selected].wiki ? 'Wikipedia ↗' : 'in tree ↗'}</a>

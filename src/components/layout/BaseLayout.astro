@@ -324,7 +324,7 @@ const trunks = [
         <p class="sb-label">Trunks</p>
         <div class="sb-trunks">
           {trunks.map(t => (
-            <a href={`${base}domains#${t.id}`}><i style={`background:${t.color};box-shadow:0 0 6px ${t.color}`}></i>{t.name}</a>
+            <a href={`${base}domains/${t.id}`}><i style={`background:${t.color};box-shadow:0 0 6px ${t.color}`}></i>{t.name}</a>
           ))}
         </div>
 
@@ -439,11 +439,15 @@ const trunks = [
           while (p >= 0 && guard++ < 8) { parts.unshift(s.nodes[p].name); p = parents[p]; }
           return parts.join(' · ');
         };
+        // map FIRST with the real index, filter after — filtering first
+        // would renumber idx and point every deep link at the wrong node.
         searchIndex = s.nodes
-          .filter((n: any) => n.kind !== 'trunk')
-          .map((n: any, i: number) => ({
+          .map((n: any, i: number) => ({ n, i }))
+          .filter(({ n }: any) => n.kind !== 'trunk')
+          .map(({ n, i }: any) => ({
             name: n.name, kind: n.kind, path: pathOf(i), idx: i,
             color: s.trunks[n.trunk]?.color ?? '#c9a227',
+            trunkId: s.trunks[n.trunk]?.id ?? '',
           }));
         return searchIndex;
       }
@@ -462,7 +466,7 @@ const trunks = [
             .slice(0, 10);
           searchOut!.innerHTML = hits.length
             ? hits.map(h => `
-              <a href="${import.meta.env.BASE_URL}domains#n=${h.idx}">
+              <a href="${import.meta.env.BASE_URL}domains/${h.trunkId}#n=${h.idx}">
                 <span class="r-name">${h.name}</span>
                 <span class="r-path">${h.kind} · ${h.path || 'atlas root'}</span>
               </a>`).join('')
