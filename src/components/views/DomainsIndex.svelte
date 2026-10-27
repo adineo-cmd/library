@@ -67,7 +67,11 @@
       <p class="count num">{cards.length} main domains · pick one to see its tree</p>
     </div>
 
-    {#each [{ name: 'Main trunks', items: cards.slice(0, 8) }, { name: 'Beyond the trunks', items: cards.slice(8) }] as group (group.name)}
+    {#each [
+      { name: 'Academic & professional trunks', items: cards.slice(0, 8) },
+      { name: 'Sports, trades & daily life', items: cards.slice(8, 11) },
+      { name: 'Beyond the trunks', items: cards.slice(11) },
+    ] as group (group.name)}
       {#if group.items.length}
         <section class="group">
           <header class="group__head">
