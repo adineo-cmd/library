@@ -89,8 +89,20 @@ async function fillSpineWiki(nodes) {
   }
 }
 
+// Which trunk each Wikidata root feeds. Disciplines are assigned by keyword
+// (they spread across the academic trunks); sport and game items belong to
+// Sports & Games; crafts and occupations to Trades & Crafts.
+const ROOT_TRUNK = {
+  sports: 'sports',
+  games: 'sports',
+  crafts: 'trades',
+  occupations: 'trades',
+};
+
 async function main() {
-  const { edges } = JSON.parse(readFileSync(resolve(WORK, 'wikidata-edges.json'), 'utf8'));
+  const edgeFile = JSON.parse(readFileSync(resolve(WORK, 'wikidata-edges.json'), 'utf8'));
+  const { edges } = edgeFile;
+  const provenance = edgeFile.provenance ?? {};
   const labels = JSON.parse(readFileSync(resolve(WORK, 'wikidata-labels.json'), 'utf8'));
 
   // ---- spine nodes ----------------------------------------------------------
@@ -188,12 +200,18 @@ async function main() {
   const placed = new Map(); // qid -> parent node index
   for (const qid of qids) {
     if (firstPass.has(qid)) { placed.set(qid, firstPass.get(qid)); continue; }
-    // No keyword hit — trunk from the parent's placement if any, else "general".
+    // No keyword hit — ancestry decides: which Wikidata root the item
+    // descends from, then the parent's placement, then "general".
     const p = wdParents.get(qid);
+    const roots = provenance[qid] ?? [];
+    const rootTrunk = roots.map(r => ROOT_TRUNK[r]).find(t => t != null);
+    if (rootTrunk != null) {
+      placed.set(qid, otherBucket.get(trunkIdx.get(rootTrunk)));
+      continue;
+    }
     const pNode = p != null && placed.has(p) ? placed.get(p) : null;
     if (pNode != null) {
-      const trunk = nodes[pNode].trunk;
-      placed.set(qid, otherBucket.get(trunk));
+      placed.set(qid, otherBucket.get(nodes[pNode].trunk));
     } else {
       placed.set(qid, otherBucket.get(SPINE.length));
     }
@@ -203,6 +221,9 @@ async function main() {
   for (const qid of qids) {
     if (firstPass.has(qid)) continue;
     if (nodes[placed.get(qid)]?.trunk !== SPINE.length) continue;
+    const roots = provenance[qid] ?? [];
+    const rootTrunk = roots.map(r => ROOT_TRUNK[r]).find(t => t != null);
+    if (rootTrunk != null) { placed.set(qid, otherBucket.get(trunkIdx.get(rootTrunk))); continue; }
     const p = wdParents.get(qid);
     const pNode = p != null && placed.has(p) ? placed.get(p) : null;
     if (pNode != null) placed.set(qid, otherBucket.get(nodes[pNode].trunk));
@@ -322,6 +343,90 @@ async function main() {
       const hit = byLabel.get(n.name.toLowerCase());
       if (hit?.wiki) n.wiki = hit.wiki;
       if (hit?.qid) n.qid = hit.qid;
+    }
+  }
+
+  // ---- the Wikipedia layer -----------------------------------------------------
+  // The Wikidata roots give clean structure; the 1.1M Wikipedia categories
+  // (already ingested locally from the wiki dumps) give the long tail — every
+  // sport, game, craft, trade and hobby with a category on the wiki. They
+  // arrive as a flat classified layer: keyword gate first (a category that
+  // matches no domain keyword is content, not a field, and is dropped), then
+  // per-bucket caps by article count, then dedupe against every name already
+  // in the atlas. Categories carry no hierarchy of their own — that is what
+  // the spine provides.
+  {
+    const wpPath = resolve(WORK, 'wp-categories.json');
+    if (existsSync(wpPath)) {
+      console.log('classifying the Wikipedia category pool…');
+      const wpCats = JSON.parse(readFileSync(wpPath, 'utf8'));
+      const WP_JUNK = [
+        / articles?$/i, / lists?$/i, / stubs?$/i, /^lists? of /i,
+        /\b(articles|pages|categories|templates|navalboxes)\b/i,
+        /\b(people|actors|actresses|players|footballers|musicians|singers|writers|artists|politicians|scientists|children|men|women|males|females|families|dynasties)\b/i,
+        /\b(films|albums|songs|novels|television series|tv series|books|comics|anime|manga|video games|board games|card games|magazines|newspapers)\b/i,
+        /\b(stubs|redirects|images|photographs|screenshots)\b/i,
+        /\b(19|20)\d\d(s)?\b (in|by) /i,
+        / (by|in) (country|countries|state|states|city|cities|county|province|region|continent)$/i,
+        /^\d{4}/, /\b(draft|wikiproject|user)\b/i,
+      ];
+      const knownNames = new Set(nodes.map(n => n.name.toLowerCase()));
+      const buckets = new Map(); // bucket idx -> [{name, articles}]
+      let matched = 0;
+      for (const { name, articles } of wpCats) {
+        if (matched >= 400000) break;
+        if (WP_JUNK.some(re => re.test(name))) continue;
+        const lower = name.toLowerCase();
+        if (knownNames.has(lower)) continue;
+        // subdomain keywords first — the more specific bucket wins
+        let placed = false;
+        for (let ti = 0; ti < SPINE.length && !placed; ti++) {
+          for (const domain of SPINE[ti].domains) {
+            for (const sub of domain.subs ?? []) {
+              if (sub.kw.test(name)) {
+                const b = spineIndex.get(`${SPINE[ti].id}/${domain.id}/${sub.id}`);
+                if (!buckets.has(b)) buckets.set(b, []);
+                buckets.get(b).push({ name, articles });
+                placed = true;
+                break;
+              }
+            }
+            if (placed) break;
+            if (domain.kw.test(name)) {
+              const b = spineIndex.get(`${SPINE[ti].id}/${domain.id}`);
+              if (!buckets.has(b)) buckets.set(b, []);
+              buckets.get(b).push({ name, articles });
+              placed = true;
+              break;
+            }
+          }
+        }
+        if (placed) { matched++; knownNames.add(lower); }
+      }
+      // caps: a bucket that swallowed 500 categories of one shape is a
+      // flood, not a curriculum
+      const CAP_SUB = 60, CAP_DOMAIN = 40;
+      let added = 0;
+      const wpNodes = [];
+      for (const [b, list] of buckets) {
+        const isSub = nodes[b].kind === 'subdomain';
+        const cap = isSub ? CAP_SUB : CAP_DOMAIN;
+        list.sort((x, y) => y.articles - x.articles);
+        for (const { name, articles } of list.slice(0, cap)) {
+          wpNodes.push({
+            id: `wp:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+            name, description: null,
+            wiki: name.replace(/ /g, '_'),
+            parent: b, trunk: nodes[b].trunk, kind: 'field',
+            size: 1, depth: (nodes[b].depth ?? 0) + 1,
+            pop: Math.round(fieldScore(name, Math.min(articles, 150))),
+          });
+          added++;
+        }
+      }
+      // sizes/depths recompute later; wire parents now
+      for (const n of wpNodes) nodes.push(n);
+      console.log(`wikipedia pool: ${matched} matched, ${added} placed across ${buckets.size} buckets`);
     }
   }
 

@@ -70,6 +70,19 @@ const FAMOUS_TERMS = [
   'logistic', 'aviation', 'navigation', 'surveying', 'journalis', 'rhetoric',
   'design', 'photograph', 'cinematograph', 'animation', 'typograph',
   'culinar', 'gastronom', 'sport', 'kinesiolog', 'biomechanic',
+  // sports & games
+  'football', 'basketball', 'cricket', 'tennis', 'chess', 'boxing',
+  'swimming', 'athletic', 'marathon', 'golf', 'rugby', 'baseball',
+  'martial art', 'karate', 'judo', 'esport', 'video game', 'poker',
+  'skiing', 'ice hockey', 'cycling', 'formula', 'gymnastic', 'yoga',
+  // trades & crafts
+  'carpenter', 'plumb', 'electrician', 'welding', 'blacksmith', 'tailor',
+  'mechanic', 'machinist', 'bookbind', 'pottery', 'weaving', 'glassblow',
+  'butcher', 'brewing', 'hairdress', 'tattoo',
+  // everyday life
+  'gardening', 'personal financ', 'budget', 'first aid', 'parenting',
+  'dog training', 'genealog', 'camping', 'fishing', 'hiking', 'birdwatch',
+  'wedding', 'volunteer', 'coffee', 'barbecue', 'home repair',
 ];
 
 const FAMOUS_LOWER = new Set(FAMOUS_TERMS.map(t => t.toLowerCase()));
