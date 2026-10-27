@@ -32,8 +32,22 @@ const LABELS_CACHE = resolve(WORK, 'wikidata-labels.json');
 
 const ENDPOINT = 'https://query.wikidata.org/sparql';
 const AGENT = 'arbor-atlas/1.0 (https://github.com/adineo-cmd/memex; educational atlas)';
-const DISCIPLINE = 'wd:Q11862829';
 const BATCH = 400;
+
+/**
+ * The roots of the atlas, one Wikidata class each. Academic discipline came
+ * first; sport, game, hobby and the branches of art make the atlas universal
+ * — everything a person can learn, not only what universities teach. Each
+ * root's subtree is fetched separately and the provenance recorded, so the
+ * build can assign trunks by ancestry before keywords ever run.
+ */
+const ROOTS = [
+  { qid: 'Q11862829', name: 'disciplines' },   // academic discipline
+  { qid: 'Q349',       name: 'sports' },        // sport
+  { qid: 'Q11410',     name: 'games' },         // game
+  { qid: 'Q2207288',   name: 'crafts' },        // craft
+  { qid: 'Q12737077',  name: 'occupations' },   // occupation
+];
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -67,43 +81,47 @@ async function sparql(query, { tries = 5 } = {}) {
 
 const qid = (uri) => (uri?.value ? uri.value.split('/').pop() : null);
 
-/** Every item inside the discipline subtree, one column — small response. */
+/** Every item inside each root's subtree, one column per root. */
 async function fetchItems() {
-  const rows = await sparql(`
-    SELECT ?item WHERE { ?item wdt:P279+ ${DISCIPLINE} . }`);
-  const items = rows.map(r => qid(r.item)).filter(Boolean);
-  if (!items.length && rows.length) {
-    console.error('  diagnose first row:', JSON.stringify(rows[0]).slice(0, 300));
+  const byRoot = {};
+  for (const root of ROOTS) {
+    const rows = await sparql(`
+      SELECT ?item WHERE { ?item wdt:P279+ wd:${root.qid} . }`);
+    const items = rows.map(r => qid(r.item)).filter(Boolean);
+    byRoot[root.name] = items;
+    console.log(`  ${root.name} (${root.qid}): ${items.length} items`);
   }
-  console.log(`  items: ${items.length} (${rows.length - items.length} malformed rows skipped)`);
-  return items;
+  return byRoot;
 }
 
 /**
- * Every P279 edge with both ends inside the discipline subtree, fetched in
- * VALUES batches. The single monolithic query returns a ~28 MB JSON body that
- * the endpoint truncates mid-JSON (it died at the same byte offset on every
- * retry), so the work is split into ~400-item requests whose responses are
- * small enough to always arrive complete.
+ * Every P279 edge with both ends inside the UNION of all root subtrees,
+ * fetched in VALUES batches. The single monolithic query returns a ~28 MB
+ * JSON body that the endpoint truncates mid-JSON (it died at the same byte
+ * offset on every retry), so the work is split into ~400-item requests whose
+ * responses are small enough to always arrive complete. `parentsOfRoot`
+ * records, per item, WHICH root(s) it descends from — the build uses that
+ * provenance to assign trunks before keywords run.
  */
-async function fetchEdges(items) {
-  const inTree = new Set(items);
+async function fetchEdges(byRoot) {
+  const all = [...new Set(Object.values(byRoot).flat())];
+  const inUnion = new Set(all);
+  const roots = ROOTS.map(r => `wd:${r.qid}`);
   const edges = [];
-  const batches = Math.ceil(items.length / BATCH);
+  const batches = Math.ceil(all.length / BATCH);
   for (let b = 0; b < batches; b++) {
-    const chunk = items.slice(b * BATCH, (b + 1) * BATCH);
+    const chunk = all.slice(b * BATCH, (b + 1) * BATCH);
     const values = chunk.map(q => `wd:${q}`).join(' ');
     try {
       const rows = await sparql(`
         SELECT ?item ?parent WHERE {
           VALUES ?item { ${values} }
           ?item wdt:P279 ?parent .
-          ?parent wdt:P279+ ${DISCIPLINE} .
+          ?parent wdt:P279+ ?anyRoot . VALUES ?anyRoot { ${roots.join(' ')} }
         }`);
       for (const r of rows) {
         const child = qid(r.item), parent = qid(r.parent);
-        // Edges to the root itself are the top level, handled separately.
-        if (inTree.has(parent)) edges.push({ child, parent });
+        if (inUnion.has(parent)) edges.push({ child, parent });
       }
     } catch (e) {
       console.warn(`  edge batch ${b + 1}/${batches} failed: ${e.message}`);
@@ -115,13 +133,29 @@ async function fetchEdges(items) {
   return edges;
 }
 
-/** Direct children of the root itself — the top level of the taxonomy. */
+/** Direct children of each root — the top level of every taxonomy. */
 async function fetchTopLevel() {
-  const rows = await sparql(`
-    SELECT ?item WHERE { ?item wdt:P279 ${DISCIPLINE} . }`);
-  const items = rows.map(r => qid(r.item)).filter(Boolean);
-  console.log(`  top level: ${items.length}`);
-  return items;
+  const top = [];
+  for (const root of ROOTS) {
+    const rows = await sparql(`
+      SELECT ?item WHERE { ?item wdt:P279 wd:${root.qid} . }`);
+    const items = rows.map(r => qid(r.item)).filter(Boolean);
+    top.push(...items);
+    console.log(`  top level ${root.name}: ${items.length}`);
+  }
+  return top;
+}
+
+/** Which root subtrees each item descends from (transitively, via the roots'
+ *  P279 paths). Cheap: one SPARQL query per root over its own subtree. */
+async function fetchRootProvenance(byRoot) {
+  const prov = {};
+  for (const root of ROOTS) {
+    for (const q of byRoot[root.name] ?? []) {
+      (prov[q] ??= []).push(root.name);
+    }
+  }
+  return prov;
 }
 
 /** Label + description + enwiki sitelink via wbgetentities — the MediaWiki
@@ -176,16 +210,17 @@ async function fetchLabelBatch(qids) {
 async function main() {
   mkdirSync(WORK, { recursive: true });
 
-  let edges, top;
+  let edges, top, provenance;
   if (existsSync(EDGES_CACHE)) {
-    ({ edges, top } = JSON.parse(readFileSync(EDGES_CACHE, 'utf8')));
+    ({ edges, top, provenance } = JSON.parse(readFileSync(EDGES_CACHE, 'utf8')));
     console.log(`edges cached: ${edges.length}, top: ${top.length}`);
   } else {
     console.log('fetching edges…');
-    const items = await fetchItems();
-    edges = await fetchEdges(items);
+    const byRoot = await fetchItems();
+    edges = await fetchEdges(byRoot);
     top = await fetchTopLevel();
-    writeFileSync(EDGES_CACHE, JSON.stringify({ edges, top }));
+    provenance = await fetchRootProvenance(byRoot);
+    writeFileSync(EDGES_CACHE, JSON.stringify({ edges, top, provenance }));
   }
 
   // The item set: every node named by an edge, plus the root's children.
