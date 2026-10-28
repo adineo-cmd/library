@@ -3,26 +3,26 @@
 
 /* --- Memex Global Theme Variables --- */
 :root {
-  --bg-primary: #0f172a;      /* Slate 900 */
-  --bg-secondary: #1e293b;    /* Slate 800 */
-  --text-primary: #f8fafc;    /* Slate 50 */
-  --text-secondary: #94a3b8;  /* Slate 400 */
-  --accent: #38bdf8;          /* Sky 400 */
-  --accent-hover: #0ea5e9;    /* Sky 500 */
-  --border: #334155;          /* Slate 700 */
+  color-scheme: dark;
+  --bg-primary: #0c110e;
+  --bg-secondary: #111814;
+  --text-primary: #f2ecdf;
+  --text-secondary: #a6aea3;
+  --accent: #c9a227;
+  --accent-hover: #dcb43a;
+  --border: #2b3832;
 }
 
-/* Light mode overrides */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f1f5f9;
-    --text-primary: #0f172a;
-    --text-secondary: #475569;
-    --accent: #0284c7;
-    --accent-hover: #0369a1;
-    --border: #e2e8f0;
-  }
+/* The shared Meridian theme is set on <html data-theme>. */
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary: #f3eee2;
+  --bg-secondary: #ebe4d5;
+  --text-primary: #1c2620;
+  --text-secondary: #4f5a53;
+  --accent: #8a6d12;
+  --accent-hover: #6f570c;
+  --border: #dcd5c6;
 }
 
 /* --- Base Resets --- */

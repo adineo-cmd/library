@@ -35,6 +35,24 @@ const trunks = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title} — Arbor</title>
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#0c110e" />
+
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        let theme = 'dark';
+        try {
+          const saved = localStorage.getItem('meridian-theme') || localStorage.getItem('arbor-theme');
+          theme = saved === 'light' || saved === 'dark'
+            ? saved
+            : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        } catch {
+          /* storage can be blocked; the dark default still works */
+        }
+        root.setAttribute('data-theme', theme);
+        root.style.colorScheme = theme;
+      })();
+    </script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -42,34 +60,36 @@ const trunks = [
 
     <style>
       :root {
-        --bg-primary: #0c0f0e;
-        --bg-secondary: #111614;
-        --bg-tertiary: #171d1a;
-        --text-primary: #e6e2d6;
-        --text-secondary: #9aa39c;
-        --text-muted: #5c6660;
+        color-scheme: dark;
+        --bg-primary: #0c110e;
+        --bg-secondary: #111814;
+        --bg-tertiary: #16211b;
+        --text-primary: #f2ecdf;
+        --text-secondary: #a6aea3;
+        --text-muted: #7e887f;
         --accent: #c9a227;
         --accent-soft: rgba(201, 162, 39, 0.14);
-        --line: #1c2320;
-        --line-light: #2b3530;
-        --glass: rgba(13, 16, 15, 0.82);
+        --line: #1c2521;
+        --line-light: #2b3832;
+        --glass: rgba(12, 17, 14, 0.84);
         --font-display: 'Cormorant Garamond', Georgia, serif;
         --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         --font-data: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
       }
 
       html[data-theme="light"] {
-        --bg-primary: #f2efe6;
-        --bg-secondary: #e9e5d9;
-        --bg-tertiary: #ded9cb;
-        --text-primary: #1a1d1b;
+        color-scheme: light;
+        --bg-primary: #f3eee2;
+        --bg-secondary: #ebe4d5;
+        --bg-tertiary: #e2dac9;
+        --text-primary: #1c2620;
         --text-secondary: #4f5a53;
-        --text-muted: #7d877f;
-        --accent: #8a6d12;
+        --text-muted: #5f6b63;
+        --accent: #7a5f0e;
         --accent-soft: rgba(138, 109, 18, 0.12);
-        --line: #d8d3c5;
-        --line-light: #c2bcab;
-        --glass: rgba(242, 239, 230, 0.88);
+        --line: #dcd5c6;
+        --line-light: #c5bdad;
+        --glass: rgba(243, 238, 226, 0.88);
       }
 
       * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -342,7 +362,7 @@ const trunks = [
           <span class="brand-name">Arbor.</span>
           <span class="brand-tagline">A field atlas for wandering minds</span>
         </div>
-        <button class="theme-toggle" id="themeToggle" aria-label="Toggle light and dark"></button>
+        <button class="theme-toggle" id="themeToggle" aria-label="Switch to light theme" title="Switch to light theme"></button>
       </div>
       <nav class="nav" aria-label="Primary">
         <ul class="nav-list">
@@ -377,16 +397,46 @@ const trunks = [
 
     <script>
       const root = document.documentElement;
-      const savedTheme = localStorage.getItem('arbor-theme') || 'dark';
-      root.setAttribute('data-theme', savedTheme);
+      const THEME_KEY = 'meridian-theme';
+
+      function paintThemeControls(theme: string) {
+        const light = theme === 'light';
+        const label = light ? 'Switch to dark theme' : 'Switch to light theme';
+        document.getElementById('themeToggle')?.setAttribute('aria-label', label);
+        document.getElementById('themeToggle')?.setAttribute('title', label);
+        const sideButton = document.getElementById('sbTheme');
+        if (sideButton) sideButton.textContent = light ? 'dark' : 'light';
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', light ? '#f3eee2' : '#0c110e');
+      }
+
+      function applyTheme(theme: string, persist = true) {
+        const next = theme === 'light' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        root.style.colorScheme = next;
+        if (persist) {
+          try {
+            localStorage.setItem(THEME_KEY, next);
+          } catch {
+            /* private mode — the theme still applies for this visit */
+          }
+        }
+        paintThemeControls(next);
+      }
 
       function flipTheme() {
-        const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-        root.setAttribute('data-theme', next);
-        localStorage.setItem('arbor-theme', next);
+        applyTheme(root.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
       }
+      applyTheme(root.getAttribute('data-theme') || 'dark', false);
       document.getElementById('themeToggle')?.addEventListener('click', flipTheme);
       document.getElementById('sbTheme')?.addEventListener('click', flipTheme);
+
+      window.addEventListener('storage', (event) => {
+        if (event.key !== THEME_KEY) return;
+        if (event.newValue === 'light' || event.newValue === 'dark') {
+          applyTheme(event.newValue, false);
+        }
+      });
 
       // Footer facts come from the artifact, not from hard-coded text.
       fetch(import.meta.env.BASE_URL + 'data/artifacts/structure.json')

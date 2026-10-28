@@ -144,6 +144,10 @@
     font-family: var(--font-data); font-size: 9.5px; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--trunk);
   }
+  /* Pastel trunk colors are too pale for small text on a cream card. */
+  :global(html[data-theme="light"]) .card__kind {
+    color: color-mix(in srgb, var(--trunk) 35%, #16211b);
+  }
   .card__title {
     font-family: var(--font-body); font-size: 17px; font-weight: 600;
     color: var(--text-primary); margin: 0;
