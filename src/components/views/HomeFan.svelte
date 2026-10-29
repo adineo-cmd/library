@@ -10,7 +10,7 @@
    */
   import { onMount } from 'svelte';
 
-  // BASE_URL is '/' in dev and '/memex/' on Pages — every fetch and in-site
+  // BASE_URL is '/' in dev and '/library/' on Pages — every fetch and in-site
   // link must go through it or the deployed site 404s.
   const BASE = import.meta.env.BASE_URL;
 
@@ -102,7 +102,7 @@
 
       <!-- root drawn above its arcs -->
       <circle cx={ROOT.x} cy={ROOT.y} r="9" fill="#e8b76a" />
-      <text class="root-label" x={ROOT.x + 18} y={ROOT.y + 4}>Arbor Root</text>
+      <text class="root-label" x={ROOT.x + 18} y={ROOT.y + 4}>Library Root</text>
 
       {#each trunks as t, i}
         {@const y = labelY(i, trunks.length)}

@@ -1,8 +1,8 @@
 {
-  "title": "Memex",
+  "title": "Library",
   "tagline": "An Associative Trail Through Human Knowledge",
   "description": "Explore the interconnected web of human knowledge. Discover fields you never knew existed and how they relate to what you already know.",
-  "author": "Memex Contributors",
+  "author": "Library Contributors",
   "url": "https://yourdomain.com",
   "theme": {
     "default": "dark",

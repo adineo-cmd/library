@@ -55,7 +55,7 @@ async function fillSpineWiki(nodes) {
       });
       try {
         const res = await fetch(url, {
-          headers: { 'User-Agent': 'arbor-atlas/1.0 (educational atlas)' },
+          headers: { 'User-Agent': 'library/1.0 (educational atlas)' },
           signal: AbortSignal.timeout(30_000),
         });
         const j = await res.json();

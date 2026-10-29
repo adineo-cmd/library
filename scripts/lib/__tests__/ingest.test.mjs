@@ -563,7 +563,7 @@ describe('missingInputs', () => {
     // patterns are read from .gitignore rather than restated as constants, so
     // deleting the rule fails this test instead of failing quietly on main.
     //
-    // memex/.gitignore, three levels up from scripts/lib/__tests__/. Four levels up
+    // library/.gitignore, three levels up from scripts/lib/__tests__/. Four levels up
     // is the PARENT repo, which has its own copy of the rule — reading that made
     // this test pass even with both rules deleted from here, which is the exact
     // failure it exists to prevent. The assertion below pins the repo root to the

@@ -33,7 +33,7 @@ const trunks = [
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{title} — Arbor</title>
+    <title>{title} — Library</title>
     <meta name="description" content={description} />
     <meta name="theme-color" content="#0c110e" />
 
@@ -42,7 +42,7 @@ const trunks = [
         const root = document.documentElement;
         let theme = 'dark';
         try {
-          const saved = localStorage.getItem('meridian-theme') || localStorage.getItem('arbor-theme');
+          const saved = localStorage.getItem('treehouse-theme') || localStorage.getItem('arbor-theme');
           theme = saved === 'light' || saved === 'dark'
             ? saved
             : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
@@ -318,7 +318,7 @@ const trunks = [
       <aside class="sidebar" id="sidebar" aria-label="Site navigation">
         <div class="sb-head">
           <a class="sb-brand" href={base}>
-            <span class="brand-name">Arbor.</span>
+            <span class="brand-name">Library.</span>
           </a>
           <button class="sb-close" id="sbClose" aria-label="Close menu">✕</button>
         </div>
@@ -359,7 +359,7 @@ const trunks = [
     <header class="header">
       <div class="header-top">
         <div class="brand">
-          <span class="brand-name">Arbor.</span>
+          <span class="brand-name">Library.</span>
           <span class="brand-tagline">A field atlas for wandering minds</span>
         </div>
         <button class="theme-toggle" id="themeToggle" aria-label="Switch to light theme" title="Switch to light theme"></button>
@@ -397,7 +397,7 @@ const trunks = [
 
     <script>
       const root = document.documentElement;
-      const THEME_KEY = 'meridian-theme';
+      const THEME_KEY = 'treehouse-theme';
 
       function paintThemeControls(theme: string) {
         const light = theme === 'light';

@@ -13,9 +13,9 @@ export default defineConfig({
       tailwindcss() // Tailwind v4 Vite plugin
     ]
   },
-  // The site is served from https://adineo-cmd.github.io/memex/, so every
+  // The site is served from https://adineo-cmd.github.io/library/, so every
   // asset and page URL is emitted under this base.
-  base: '/memex/',
+  base: '/library/',
   
   // Optimize for mobile and fast builds
   build: {

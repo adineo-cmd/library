@@ -31,7 +31,7 @@ const EDGES_CACHE = resolve(WORK, 'wikidata-edges.json');
 const LABELS_CACHE = resolve(WORK, 'wikidata-labels.json');
 
 const ENDPOINT = 'https://query.wikidata.org/sparql';
-const AGENT = 'arbor-atlas/1.0 (https://github.com/adineo-cmd/memex; educational atlas)';
+const AGENT = 'library/1.0 (https://github.com/adineo-cmd/library; educational atlas)';
 const BATCH = 400;
 
 /**

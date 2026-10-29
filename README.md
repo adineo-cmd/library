@@ -1,8 +1,8 @@
-# Memex
+# Library
 
 > A knowledge platform for discovering fields and new topics.
 
-Memex maps the space of human knowledge into a browsable atlas: **9,261
+Library maps the space of human knowledge into a browsable atlas: **9,261
 discipliplines** arranged under **8 curated trunks** (Sciences, Mathematics &
 Logic, Technology & Computing, Humanities, Social Sciences, Arts & Culture,
 Health & Medicine, Law & Governance), each field with its own

@@ -252,8 +252,8 @@
 
   onMount(async () => {
     const parts = location.pathname.split('/').filter(Boolean);
-    // ['memex','roadmap','physics'] on Pages, ['roadmap','physics'] locally
-    slug = (parts[0] === 'memex' ? parts[2] : parts[1]) ?? '';
+    // ['library','roadmap','physics'] on Pages, ['roadmap','physics'] locally
+    slug = (parts[0] === 'library' ? parts[2] : parts[1]) ?? '';
     try {
       done = new Set(JSON.parse(localStorage.getItem(storageKey(slug)) ?? '[]'));
     } catch { done = new Set(); }
