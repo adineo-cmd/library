@@ -302,8 +302,12 @@
 
       // entry trunk: the URL path names it (/domains/<id>); #n=<idx> from
       // sidebar search jumps deeper still
-      const parts = location.pathname.split('/').filter(Boolean);
-      const pathId = (parts[0] === 'library' ? parts[2] : parts[1]) ?? '';
+      const base = import.meta.env.BASE_URL.replace(/\/+$/, '');
+      const path = location.pathname.startsWith(base)
+        ? location.pathname.slice(base.length)
+        : location.pathname;
+      const parts = path.split('/').filter(Boolean);
+      const pathId = parts[1] ?? '';
       const initial = trunks.findIndex(t => t.id === pathId);
       setTrunk(initial >= 0 ? initial : 0, false);
       const applyHash = () => {

@@ -251,9 +251,14 @@
   }
 
   onMount(async () => {
-    const parts = location.pathname.split('/').filter(Boolean);
-    // ['library','roadmap','physics'] on Pages, ['roadmap','physics'] locally
-    slug = (parts[0] === 'library' ? parts[2] : parts[1]) ?? '';
+    // Strip the configured base so this works standalone (/library/) and
+    // under the combined site (/treehouse/library/).
+    const base = import.meta.env.BASE_URL.replace(/\/+$/, '');
+    const path = location.pathname.startsWith(base)
+      ? location.pathname.slice(base.length)
+      : location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    slug = parts[1] ?? '';
     try {
       done = new Set(JSON.parse(localStorage.getItem(storageKey(slug)) ?? '[]'));
     } catch { done = new Set(); }

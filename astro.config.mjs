@@ -13,9 +13,9 @@ export default defineConfig({
       tailwindcss() // Tailwind v4 Vite plugin
     ]
   },
-  // The site is served from https://adineo-cmd.github.io/library/, so every
-  // asset and page URL is emitted under this base.
-  base: '/library/',
+  // Standalone it is served from /library/. The Treehouse build sets
+  // LIBRARY_BASE so the same output also works under /treehouse/library/.
+  base: process.env.LIBRARY_BASE || '/library/',
   
   // Optimize for mobile and fast builds
   build: {
