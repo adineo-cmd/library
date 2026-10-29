@@ -9,6 +9,11 @@ const { title, description = '', currentPage = 'home' } = Astro.props;
 const base = import.meta.env.BASE_URL;
 const fullChrome = currentPage === 'home';
 
+// Set only by the Treehouse build; standalone Pages has no sibling map.
+const treehouseHome = process.env.TREEHOUSE_HOME ?? '';
+const treehouseSwitch = process.env.TREEHOUSE_SWITCH ?? '';
+const treehouseSwitchLabel = process.env.TREEHOUSE_SWITCH_LABEL ?? 'Open the other map';
+
 const navItems = [
   { key: 'home', label: 'Home', sub: 'The atlas root', href: base },
   { key: 'domains', label: 'Domains', sub: 'Every field in one tree', href: `${base}domains` },
@@ -145,7 +150,7 @@ const trunks = [
       }
 
       .nav { display: flex; justify-content: center; padding: 0 40px; }
-      .nav-list { display: flex; gap: 10px; list-style: none; }
+      .nav-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 10px; list-style: none; }
       .nav-link {
         display: inline-block;
         font-family: var(--font-data); font-size: 11px; letter-spacing: 0.16em;
@@ -157,6 +162,9 @@ const trunks = [
       .nav-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       .nav-link.active { color: #14100a; background: var(--accent); }
       html[data-theme="light"] .nav-link.active { color: #fdfbf4; }
+      .nav-link--switch { color: var(--accent); }
+      .nav-link--switch:hover { color: var(--accent); background: var(--bg-tertiary); }
+      .nav-link--switch span { font-size: 12px; }
 
       .main { min-height: calc(100vh - 140px); position: relative; }
 
@@ -238,6 +246,8 @@ const trunks = [
       .sb-nav a b { font-size: 14px; font-weight: 600; }
       .sb-nav a.active b { color: var(--accent); }
       .sb-nav a span { font-size: 11.5px; color: var(--text-muted); }
+      .sb-nav a.sb-switch { margin-top: 6px; }
+      .sb-nav a.sb-switch b { color: var(--accent); }
 
       .sb-label {
         font-family: var(--font-data); font-size: 9.5px; letter-spacing: 0.16em;
@@ -298,6 +308,13 @@ const trunks = [
         clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
       }
 
+      @media (max-width: 640px) {
+        .header-top { padding: 16px 20px; flex-wrap: wrap; gap: 10px; }
+        .brand-tagline { display: none; }
+        .nav { padding: 0 12px; }
+        .nav-link { font-size: 10px; letter-spacing: 0.1em; padding: 8px 11px; }
+      }
+
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
           animation-duration: 0.01ms !important;
@@ -339,6 +356,11 @@ const trunks = [
               <b>{item.label}</b><span>{item.sub}</span>
             </a>
           ))}
+          {treehouseSwitch && (
+            <a class="sb-switch" href={treehouseSwitch}>
+              <b>Switch map</b><span>{treehouseSwitchLabel}</span>
+            </a>
+          )}
         </nav>
 
         <p class="sb-label">Trunks</p>
@@ -377,6 +399,13 @@ const trunks = [
               </a>
             </li>
           ))}
+          {treehouseSwitch && (
+            <li>
+              <a class="nav-link nav-link--switch" href={treehouseSwitch}>
+                Switch map <span aria-hidden="true">↗</span>
+              </a>
+            </li>
+          )}
         </ul>
       </nav>
     </header>
@@ -389,6 +418,7 @@ const trunks = [
       <div class="footer-inner">
         <p id="footCount">A field atlas of human knowledge, curated into eight trunks.</p>
         <p>
+          {treehouseHome && <><a href={treehouseHome}>Treehouse</a><span aria-hidden="true"> · </span></>}
           Structure from <a href="https://www.wikidata.org/">Wikidata</a>, CC0.
           <span id="buildStamp"></span>
         </p>
