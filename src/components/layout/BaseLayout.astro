@@ -2,7 +2,7 @@
 interface Props {
   title: string;
   description?: string;
-  currentPage?: 'home' | 'domains' | 'roadmap' | 'graph';
+  currentPage?: 'home' | 'domains' | 'paths' | 'graph';
 }
 
 const { title, description = '', currentPage = 'home' } = Astro.props;
@@ -17,7 +17,7 @@ const treehouseSwitchLabel = process.env.TREEHOUSE_SWITCH_LABEL ?? 'Open the oth
 const navItems = [
   { key: 'home', label: 'Home', sub: 'The atlas root', href: base },
   { key: 'domains', label: 'Domains', sub: 'Every field in one tree', href: `${base}domains` },
-  { key: 'roadmap', label: 'Roadmap', sub: 'Learning paths for each field', href: `${base}roadmap` },
+  { key: 'paths', label: 'Paths', sub: 'Learning paths for each field', href: `${base}paths` },
   { key: 'graph', label: 'Graph View', sub: 'The whole atlas, drifting', href: `${base}graph` },
 ];
 
