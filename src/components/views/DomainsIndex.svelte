@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * The domains index — one card per main domain, in the same idiom as the
-   * roadmap index. Clicking a card opens that trunk's tree on
+   * paths index. Clicking a card opens that trunk's tree on
    * /domains/<id>; the tree page is where the wandering happens, this page
    * is the choosing.
    */
