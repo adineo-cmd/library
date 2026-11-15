@@ -14,7 +14,7 @@ Health & Medicine, Law & Governance), each field with its own
 |---|---|
 | `/` | The atlas root fanning out to the eight trunks. |
 | `/domains` | Root → trunks → domains fan, then one section per domain with its curated subdomains and the fields beneath. |
-| `/roadmap` | An index of every learning path; `/roadmap/[slug]` draws one as a stepped path with tickable progress. |
+| `/paths` | An index of every learning path; `/paths/[slug]` draws one as a stepped path with tickable progress. |
 | `/graph` | The whole atlas as a drifting constellation — clusters glow by trunk, drag to pan, scroll to zoom, click a star to isolate its neighbourhood. |
 
 ## Where the data comes from
@@ -38,7 +38,7 @@ subclass-of tree is clean all the way up.
 scripts/fetch-taxonomy.mjs    # Wikidata -> atlas-work/wikidata-{edges,labels}.json  (cached, merge-mode)
 scripts/spine.mjs             # the hand-curated 8-trunk structure
 scripts/build-structure.mjs   # classify the pool under the spine, force layout -> public/data/artifacts/
-scripts/build-roadmaps.mjs    # a learning path per domain/subdomain/field -> public/data/artifacts/roadmaps.json
+scripts/build-paths.mjs       # a learning path per domain/subdomain/field -> public/data/artifacts/roadmaps.json
 npm run build:artifacts       # the legacy Wikipedia pipeline (kept, not required)
 npm run dev / build           # Astro serves the artifacts from public/data/artifacts
 ```
@@ -46,9 +46,9 @@ npm run dev / build           # Astro serves the artifacts from public/data/arti
 `fetch-taxonomy.mjs` refetches only what is missing, so a dropped batch costs
 one rerun, not the whole taxonomy. Caches live in `atlas-work/` (gitignored).
 
-## Roadmap generation
+## Path generation
 
-`build-roadmaps.mjs` turns every qualifying node into a learning path: a
+`build-paths.mjs` turns every qualifying node into a learning path: a
 trunk's path runs through its domains; a domain's through its curated
 subdomains; a subdomain's or field's through its children. Children are
 ordered foundation-first (largest subtree first), laid out in rows with the
@@ -62,7 +62,7 @@ are no accounts.
 npm install
 node scripts/fetch-taxonomy.mjs      # first run: ~4 min, then cached
 node scripts/build-structure.mjs     # ~40 s (force layout)
-node scripts/build-roadmaps.mjs      # ~10 s
+node scripts/build-paths.mjs      # ~10 s
 npm run dev
 ```
 

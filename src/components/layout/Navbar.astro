@@ -1,6 +1,6 @@
 ---
 interface Props {
-  currentPage?: 'home' | 'domains' | 'roadmap' | 'graph';
+  currentPage?: 'home' | 'domains' | 'paths' | 'graph';
 }
 
 const { currentPage = 'home' } = Astro.props;
@@ -8,7 +8,7 @@ const { currentPage = 'home' } = Astro.props;
 const navItems = [
   { key: 'home', label: '00 HOME', href: '/' },
   { key: 'domains', label: '01 DOMAINS', href: '/domains' },
-  { key: 'roadmap', label: '02 ROADMAP', href: '/roadmap' },
+  { key: 'paths', label: '02 PATHS', href: '/paths' },
   { key: 'graph', label: '03 GRAPH VIEW', href: '/graph' },
 ];
 ---
