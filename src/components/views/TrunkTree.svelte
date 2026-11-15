@@ -70,7 +70,7 @@
   }
 
   /** Wrap one TData as a proper d3 hierarchy node — raw objects pushed into
-n   *  d.children crash every accessor that reads d.data. */
+   *  d.children crash every accessor that reads d.data. */
   function wrap(data: TData, parent: any): any {
     return { data, parent, depth: parent.depth + 1, id: 'h' + (idSeq++) };
   }
