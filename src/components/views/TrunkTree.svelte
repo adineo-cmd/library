@@ -6,7 +6,7 @@
    * home fan / sidebar). Shows only this main domain: the trunk at the
    * left, its domains fanned out, subdomains and fields opening on click.
    * No notes drawer here — this section is for seeing a domain's shape;
-   * notes and roadmaps live in the roadmap section.
+   * notes and paths live in the paths section.
    */
   import { onMount } from 'svelte';
   import * as d3 from 'd3';
@@ -70,7 +70,7 @@
   }
 
   /** Wrap one TData as a proper d3 hierarchy node — raw objects pushed into
-   *  d.children crash every accessor that reads d.data. */
+n   *  d.children crash every accessor that reads d.data. */
   function wrap(data: TData, parent: any): any {
     return { data, parent, depth: parent.depth + 1, id: 'h' + (idSeq++) };
   }
